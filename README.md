@@ -40,18 +40,16 @@ source venv/bin/activate   # Linux/macOS
 pip install -r requirements.txt
 
 4.Run the app
-streamlit run app.py
+streamlit run app_local.py
 
 5. Optional: Custom database path
 export INVYPRO_DB=/path/to/your/custom.db   # Linux/macOS
 set INVYPRO_DB=C:\path\to\your\custom.db    # Windows
-streamlit run app.py
+streamlit run app_local.py
 
 ```
----
 
 ## License: *MIT License — free to use and modify.*
----
 
 ## 👨‍💻 Author
 
