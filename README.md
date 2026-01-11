@@ -1,7 +1,7 @@
 # InvyPro 2.0 - Professional Inventory Management System
 
 A modern, multi-organization inventory management system built with Streamlit and SQLite/PostgreSQL.
-Try it here:[InvyPro 2.0](https://inventory-manager-20-dxq2opqtsxfbkxo93yq6jz.streamlit.app/)
+Try it here: [InvyPro 2.0](https://inventory-manager-20-dxq2opqtsxfbkxo93yq6jz.streamlit.app/)
 
 ## Features
 
