@@ -25,7 +25,7 @@ class Config:
         'session_timeout': 3600,
         'max_login_attempts': 5,
         'lockout_minutes': 15,
-        'default_currency': 'USD',
+        'default_currency': 'GHS',
         'default_timezone': 'UTC'
     }
 
@@ -36,7 +36,7 @@ config = Config()
 # ============================================================================
 st.set_page_config(
     page_title="InvyPro Inventory Manager",
-    page_icon=":package:",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -409,7 +409,6 @@ def initialize_database():
                 try:
                     cur.execute(query)
                 except Exception as e:
-                    # Silently ignore if tables already exist
                     if "already exists" not in str(e):
                         print(f"Schema note: {str(e)}")
         
@@ -527,11 +526,10 @@ def authenticate_user(username: str, password: str):
         
         user = result[0]
         
-        if user[6] != 1:  # is_active check
+        if user[6] != 1:
             return {"success": False, "message": "Account is inactive"}
         
         if verify_password(user[2], user[3], password):
-            # Update last login
             execute_query(
                 "UPDATE users SET last_login = CURRENT_TIMESTAMP WHERE user_id = ?",
                 (user[0],)
@@ -575,7 +573,7 @@ def log_activity(user_id: Optional[int] = None, action: str = "", details: str =
             )
         )
     except:
-        pass  # Silently fail if logging fails
+        pass
 
 # ============================================================================
 # SESSION MANAGEMENT
@@ -613,15 +611,13 @@ def logout_user():
             details="User logged out"
         )
     
-    # Clear session but keep preferences
-    currency = st.session_state.get('currency', 'USD')
+    currency = st.session_state.get('currency', 'GHS')
     timezone = st.session_state.get('timezone', 'UTC')
     
     keys = list(st.session_state.keys())
     for key in keys:
         del st.session_state[key]
     
-    # Restore preferences
     st.session_state.currency = currency
     st.session_state.timezone = timezone
     st.session_state.authenticated = False
@@ -764,7 +760,6 @@ def delete_product(product_id: int):
         return {"success": False, "message": "Not authenticated"}
     
     try:
-        # Get product name before deletion for logging
         result = execute_query(
             "SELECT name FROM products WHERE product_id = ? AND organization = ?",
             (product_id, org),
@@ -796,21 +791,18 @@ def get_key_metrics():
         return {}
     
     try:
-        # Total products
         total_df = fetch_dataframe(
             "SELECT COUNT(*) as count FROM products WHERE organization = ?",
             (org,)
         )
         total_products = total_df.iloc[0]['count'] if not total_df.empty else 0
         
-        # Stock value
         value_df = fetch_dataframe(
             "SELECT SUM(quantity * cost_price) as value FROM products WHERE organization = ?",
             (org,)
         )
         stock_value = value_df.iloc[0]['value'] if not value_df.empty else 0
         
-        # Low stock items
         low_df = fetch_dataframe(
             """
             SELECT COUNT(*) as count 
@@ -821,14 +813,12 @@ def get_key_metrics():
         )
         low_stock = low_df.iloc[0]['count'] if not low_df.empty else 0
         
-        # Out of stock items
         out_df = fetch_dataframe(
             "SELECT COUNT(*) as count FROM products WHERE organization = ? AND quantity = 0",
             (org,)
         )
         out_of_stock = out_df.iloc[0]['count'] if not out_df.empty else 0
         
-        # Total value of sales (last 30 days)
         sales_df = fetch_dataframe(
             """
             SELECT COALESCE(SUM(total_amount), 0) as sales
@@ -863,7 +853,6 @@ def render_sidebar():
         st.markdown("---")
         
         if not st.session_state.authenticated:
-            # Login/Signup Forms
             tab_login, tab_signup = st.tabs(["Login", "Sign Up"])
             
             with tab_login:
@@ -908,7 +897,6 @@ def render_sidebar():
             st.markdown("Data export")
             
         else:
-            # User Info
             st.success(f"Welcome, {st.session_state.username}")
             st.caption(f"Organization: {st.session_state.organization}")
             st.caption(f"Role: {st.session_state.role}")
@@ -918,7 +906,6 @@ def render_sidebar():
             
             st.markdown("---")
             
-            # Navigation
             pages = [
                 ("Dashboard", "Dashboard"),
                 ("Products", "Products"),
@@ -964,7 +951,7 @@ def render_dashboard():
         st.markdown(f"""
         <div class='metric-card'>
             <div class='metric-title'>Stock Value</div>
-            <div class='metric-value'>{metrics.get('stock_value', '$0.00')}</div>
+            <div class='metric-value'>{metrics.get('stock_value', 'GHS 0.00')}</div>
             <div class='metric-subtitle'>Current value</div>
         </div>
         """, unsafe_allow_html=True)
@@ -988,7 +975,7 @@ def render_dashboard():
         st.markdown(f"""
         <div class='metric-card'>
             <div class='metric-title'>Monthly Sales</div>
-            <div class='metric-value'>{metrics.get('monthly_sales', '$0.00')}</div>
+            <div class='metric-value'>{metrics.get('monthly_sales', 'GHS 0.00')}</div>
             <div class='metric-subtitle'>Last 30 days</div>
         </div>
         """, unsafe_allow_html=True)
@@ -1025,10 +1012,8 @@ def render_dashboard():
     
     products = get_products(page_size=10)
     if not products.empty:
-        # Format the dataframe for display
         display_df = products.copy()
         
-        # Add status column
         def get_status(row):
             if row['quantity'] == 0:
                 return '<span class="badge badge-danger">Out of Stock</span>'
@@ -1041,47 +1026,12 @@ def render_dashboard():
         display_df['cost'] = display_df['cost_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
         display_df['price'] = display_df['sell_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
         
-        # Display as HTML table for better styling
         html_table = display_df[['sku', 'name', 'category', 'quantity', 'cost', 'price', 'status']].to_html(
             escape=False, index=False, classes='dataframe', border=0
         )
         st.markdown(html_table, unsafe_allow_html=True)
     else:
         st.info("No products found. Add your first product using the 'Add Product' button above.")
-        
-        # Sample data for new users
-        with st.expander("Need sample data? Click here to add demo products"):
-            if st.button("Add Sample Products"):
-                sample_products = [
-                    {
-                        'sku': 'LAP-001', 'name': 'Laptop Pro', 'description': 'High-performance laptop',
-                        'category': 'Electronics', 'supplier': 'Tech Supplies Inc', 'unit': 'pcs',
-                        'cost_price': 800, 'sell_price': 1200, 'quantity': 15, 'min_quantity': 5,
-                        'reorder_level': 10, 'location': 'Shelf A1', 'barcode': '123456789012',
-                        'notes': 'Popular item, keep stocked'
-                    },
-                    {
-                        'sku': 'DESK-001', 'name': 'Office Desk', 'description': 'Ergonomic office desk',
-                        'category': 'Furniture', 'supplier': 'Office Furniture Co', 'unit': 'pcs',
-                        'cost_price': 200, 'sell_price': 350, 'quantity': 8, 'min_quantity': 3,
-                        'reorder_level': 5, 'location': 'Warehouse B', 'barcode': '234567890123',
-                        'notes': 'Assembly required'
-                    },
-                    {
-                        'sku': 'PEN-001', 'name': 'Premium Pen Set', 'description': 'Executive pen set',
-                        'category': 'Stationery', 'supplier': 'Writing Supplies Ltd', 'unit': 'set',
-                        'cost_price': 25, 'sell_price': 45, 'quantity': 50, 'min_quantity': 20,
-                        'reorder_level': 30, 'location': 'Shelf C3', 'barcode': '345678901234',
-                        'notes': 'Best seller'
-                    }
-                ]
-                
-                for product in sample_products:
-                    product['organization'] = st.session_state.organization
-                    add_product(product)
-                
-                st.success("Sample products added successfully!")
-                st.rerun()
 
 def render_products():
     """Render products management page"""
@@ -1091,11 +1041,9 @@ def render_products():
         st.warning("Please login to manage products")
         return
     
-    # Tabs for product management
     tab1, tab2, tab3 = st.tabs(["Product List", "Add Product", "Edit Product"])
     
     with tab1:
-        # Search and filters
         col_search, col_filter, col_page = st.columns(3)
         
         with col_search:
@@ -1112,11 +1060,9 @@ def render_products():
         
         page_number = st.number_input("Page", min_value=1, value=1, step=1)
         
-        # Get products
         products = get_products(search=search_term, page=page_number, page_size=page_size)
         
         if not products.empty:
-            # Apply stock filter
             if stock_filter == "Low Stock":
                 products = products[products['quantity'] <= products['reorder_level']]
                 products = products[products['quantity'] > 0]
@@ -1125,15 +1071,12 @@ def render_products():
             elif stock_filter == "In Stock":
                 products = products[products['quantity'] > 0]
             
-            # Display product count
             st.caption(f"Showing {len(products)} products")
             
-            # Display products in a nice dataframe
             display_df = products[['sku', 'name', 'category', 'quantity', 'cost_price', 'sell_price', 'location']].copy()
             display_df['cost_price'] = display_df['cost_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
             display_df['sell_price'] = display_df['sell_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
             
-            # Add stock status with colors
             def get_stock_status(row):
                 if row['quantity'] == 0:
                     return "Out of Stock"
@@ -1160,18 +1103,17 @@ def render_products():
                 hide_index=True
             )
             
-            # Export option
             col_export, col_refresh = st.columns(2)
             with col_export:
-                if st.button("Export to CSV", use_container_width=True):
-                    csv = products.to_csv(index=False)
-                    st.download_button(
-                        label="Download CSV",
-                        data=csv,
-                        file_name="products_export.csv",
-                        mime="text/csv",
-                        key="export_csv"
-                    )
+                csv = products.to_csv(index=False)
+                st.download_button(
+                    label="Export to CSV",
+                    data=csv,
+                    file_name="products_export.csv",
+                    mime="text/csv",
+                    key="export_csv",
+                    use_container_width=True
+                )
             
             with col_refresh:
                 if st.button("Refresh", use_container_width=True):
@@ -1181,7 +1123,6 @@ def render_products():
             st.info("No products found. Add your first product in the 'Add Product' tab.")
     
     with tab2:
-        # Add product form
         with st.form("add_product_form", clear_on_submit=True):
             st.subheader("Add New Product")
             
@@ -1280,10 +1221,8 @@ def render_products():
                         st.error(result['message'])
     
     with tab3:
-        # Edit product form
         st.subheader("Edit Product")
         
-        # Get all products for selection
         all_products = get_products(page_size=1000)
         
         if not all_products.empty:
@@ -1291,7 +1230,6 @@ def render_products():
             selected_product = st.selectbox("Select product to edit", product_options)
             
             if selected_product != "-- Select Product --":
-                # Get selected product data
                 product_idx = all_products[all_products['name'] == selected_product].index[0]
                 product_data = all_products.iloc[product_idx]
                 
@@ -1360,40 +1298,33 @@ def render_products():
                     col_update, col_delete = st.columns(2)
                     
                     with col_update:
-                        update_submitted = st.form_submit_button("Update Product", use_container_width=True)
+                        if st.form_submit_button("Update Product", use_container_width=True):
+                            updated_data = {
+                                'sku': edit_sku,
+                                'name': edit_name,
+                                'description': edit_description,
+                                'category': edit_category,
+                                'supplier': edit_supplier,
+                                'unit': edit_unit,
+                                'cost_price': edit_cost,
+                                'sell_price': edit_price,
+                                'quantity': edit_quantity,
+                                'min_quantity': edit_min_qty,
+                                'reorder_level': edit_reorder,
+                                'location': edit_location,
+                                'barcode': edit_barcode,
+                                'notes': edit_notes
+                            }
+                            
+                            result = update_product(product_data['product_id'], updated_data)
+                            if result['success']:
+                                st.success(result['message'])
+                                st.rerun()
+                            else:
+                                st.error(result['message'])
                     
                     with col_delete:
-                        delete_clicked = st.form_submit_button("Delete Product", type="secondary", use_container_width=True)
-                    
-                    if update_submitted:
-                        updated_data = {
-                            'sku': edit_sku,
-                            'name': edit_name,
-                            'description': edit_description,
-                            'category': edit_category,
-                            'supplier': edit_supplier,
-                            'unit': edit_unit,
-                            'cost_price': edit_cost,
-                            'sell_price': edit_price,
-                            'quantity': edit_quantity,
-                            'min_quantity': edit_min_qty,
-                            'reorder_level': edit_reorder,
-                            'location': edit_location,
-                            'barcode': edit_barcode,
-                            'notes': edit_notes
-                        }
-                        
-                        result = update_product(product_data['product_id'], updated_data)
-                        if result['success']:
-                            st.success(result['message'])
-                            st.rerun()
-                        else:
-                            st.error(result['message'])
-                    
-                    if delete_clicked:
-                        # Confirm deletion
-                        st.warning(f"Are you sure you want to delete '{product_data['name']}'?")
-                        if st.button("Confirm Delete", type="primary"):
+                        if st.form_submit_button("Delete Product", type="secondary", use_container_width=True):
                             result = delete_product(product_data['product_id'])
                             if result['success']:
                                 st.success(result['message'])
@@ -1411,22 +1342,13 @@ def render_transactions():
         st.warning("Please login to view transactions")
         return
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.info("Sales recording functionality coming soon")
-        st.write("Future features:")
-        st.write("Record sales transactions")
-        st.write("Process purchase orders")
-        st.write("Stock adjustments")
-        st.write("Transaction history")
-    
-    with col2:
-        st.info("Transaction Types")
-        st.write("1. Sales - Customer purchases")
-        st.write("2. Purchases - Restocking inventory")
-        st.write("3. Adjustments - Stock corrections")
-        st.write("4. Transfers - Location transfers")
+    st.info("Transactions functionality is currently under development.")
+    st.write("Coming soon features:")
+    st.write("1. Record sales transactions")
+    st.write("2. Process purchase orders")
+    st.write("3. Stock adjustments")
+    st.write("4. Transaction history tracking")
+    st.write("5. Sales reports and analytics")
 
 def render_suppliers():
     """Render suppliers page"""
@@ -1436,22 +1358,76 @@ def render_suppliers():
         st.warning("Please login to manage suppliers")
         return
     
-    col1, col2 = st.columns(2)
+    tab1, tab2 = st.tabs(["Supplier List", "Add Supplier"])
     
-    with col1:
-        st.info("Supplier management coming soon")
-        st.write("Future features:")
-        st.write("Add and edit supplier information")
-        st.write("Contact management")
-        st.write("Purchase history")
-        st.write("Performance ratings")
+    with tab1:
+        try:
+            org = get_current_organization()
+            suppliers = fetch_dataframe(
+                "SELECT * FROM suppliers WHERE organization = ? ORDER BY name",
+                (org,)
+            )
+            
+            if not suppliers.empty:
+                st.dataframe(
+                    suppliers[['name', 'contact_person', 'email', 'phone', 'address']],
+                    use_container_width=True,
+                    column_config={
+                        "name": "Supplier Name",
+                        "contact_person": "Contact Person",
+                        "email": "Email",
+                        "phone": "Phone",
+                        "address": "Address"
+                    },
+                    hide_index=True
+                )
+            else:
+                st.info("No suppliers found. Add suppliers using the 'Add Supplier' tab.")
+        except:
+            st.info("No suppliers found. Add your first supplier.")
     
-    with col2:
-        st.info("Supplier Benefits")
-        st.write("Track supplier performance")
-        st.write("Manage payment terms")
-        st.write("Monitor delivery times")
-        st.write("Maintain contact details")
+    with tab2:
+        with st.form("add_supplier_form", clear_on_submit=True):
+            st.subheader("Add New Supplier")
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                name = st.text_input("Supplier Name *")
+                contact_person = st.text_input("Contact Person")
+                email = st.text_input("Email")
+            
+            with col2:
+                phone = st.text_input("Phone")
+                address = st.text_area("Address")
+                payment_terms = st.text_input("Payment Terms")
+            
+            if st.form_submit_button("Save Supplier", type="primary", use_container_width=True):
+                if not name:
+                    st.error("Supplier name is required")
+                else:
+                    org = get_current_organization()
+                    try:
+                        execute_query(
+                            """
+                            INSERT INTO suppliers (organization, name, contact_person, email, phone, address, payment_terms)
+                            VALUES (?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (org, name, contact_person, email, phone, address, payment_terms)
+                        )
+                        
+                        log_activity(
+                            user_id=st.session_state.user_id,
+                            action="supplier_added",
+                            details=f"Added supplier: {name}"
+                        )
+                        
+                        st.success("Supplier added successfully")
+                        st.rerun()
+                    except sqlite3.IntegrityError:
+                        st.error("Supplier name already exists")
+                    except Exception as e:
+                        st.error(f"Error: {str(e)}")
 
 def render_reports():
     """Render reports page"""
@@ -1461,7 +1437,6 @@ def render_reports():
         st.warning("Please login to view reports")
         return
     
-    # Simple report cards
     col1, col2 = st.columns(2)
     
     with col1:
@@ -1472,7 +1447,6 @@ def render_reports():
         </div>
         """, unsafe_allow_html=True)
         
-        # Simple inventory chart
         try:
             org = get_current_organization()
             inventory_data = fetch_dataframe(
@@ -1495,7 +1469,7 @@ def render_reports():
                 ).properties(height=200)
                 st.altair_chart(chart, use_container_width=True)
         except:
-            pass
+            st.info("No inventory data available")
     
     with col2:
         st.markdown("""
@@ -1505,7 +1479,6 @@ def render_reports():
         </div>
         """, unsafe_allow_html=True)
         
-        # Stock status summary
         try:
             org = get_current_organization()
             status_data = fetch_dataframe(
@@ -1521,14 +1494,62 @@ def render_reports():
             )
             
             if not status_data.empty:
-                st.write(f"In Stock: {int(status_data.iloc[0]['in_stock'])}")
-                st.write(f"Low Stock: {int(status_data.iloc[0]['low_stock'])}")
-                st.write(f"Out of Stock: {int(status_data.iloc[0]['out_of_stock'])}")
+                col_stat1, col_stat2, col_stat3 = st.columns(3)
+                with col_stat1:
+                    st.metric("In Stock", int(status_data.iloc[0]['in_stock']))
+                with col_stat2:
+                    st.metric("Low Stock", int(status_data.iloc[0]['low_stock']))
+                with col_stat3:
+                    st.metric("Out of Stock", int(status_data.iloc[0]['out_of_stock']))
         except:
-            pass
+            st.info("No status data available")
     
     st.markdown("---")
-    st.info("Advanced reporting features coming soon")
+    
+    # Export Reports Section
+    st.subheader("Export Reports")
+    
+    col_export1, col_export2 = st.columns(2)
+    
+    with col_export1:
+        if st.button("Export Products Report", use_container_width=True):
+            products = get_products(page_size=1000)
+            if not products.empty:
+                csv = products.to_csv(index=False)
+                st.download_button(
+                    label="Download Products CSV",
+                    data=csv,
+                    file_name="products_report.csv",
+                    mime="text/csv",
+                    key="export_products_report"
+                )
+            else:
+                st.info("No products to export")
+    
+    with col_export2:
+        if st.button("Export Stock Summary", use_container_width=True):
+            org = get_current_organization()
+            stock_summary = fetch_dataframe(
+                """
+                SELECT 
+                    COUNT(*) as total_products,
+                    SUM(quantity) as total_quantity,
+                    SUM(quantity * cost_price) as total_value
+                FROM products 
+                WHERE organization = ?
+                """,
+                (org,)
+            )
+            
+            if not stock_summary.empty:
+                csv = stock_summary.to_csv(index=False)
+                st.download_button(
+                    label="Download Stock Summary",
+                    data=csv,
+                    file_name="stock_summary.csv",
+                    mime="text/csv",
+                    key="export_stock_summary"
+                )
 
 def render_settings():
     """Render settings page"""
@@ -1545,11 +1566,11 @@ def render_settings():
         with col1:
             currency = st.selectbox(
                 "Default Currency",
-                ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"],
-                index=["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"].index(
+                ["GHS", "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"],
+                index=["GHS", "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"].index(
                     st.session_state.currency if st.session_state.currency in 
-                    ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"] 
-                    else "USD"
+                    ["GHS", "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"] 
+                    else "GHS"
                 ),
                 key="currency_select"
             )
@@ -1573,6 +1594,9 @@ def render_settings():
                 key="timezone_select"
             )
             st.session_state.timezone = timezone
+        
+        if st.button("Save Organization Settings", use_container_width=True):
+            st.success("Organization settings saved successfully")
     
     # User Settings
     with st.expander("User Settings"):
@@ -1582,28 +1606,24 @@ def render_settings():
         new_pass = st.text_input("New Password", type="password", key="new_pass")
         confirm_pass = st.text_input("Confirm New Password", type="password", key="confirm_pass")
         
-        col_change, _ = st.columns(2)
-        with col_change:
-            if st.button("Update Password", use_container_width=True):
-                if not current_pass:
-                    st.error("Please enter current password")
-                elif new_pass != confirm_pass:
-                    st.error("New passwords do not match")
-                elif len(new_pass) < 8:
-                    st.error("Password must be at least 8 characters")
+        if st.button("Update Password", use_container_width=True):
+            if not current_pass:
+                st.error("Please enter current password")
+            elif new_pass != confirm_pass:
+                st.error("New passwords do not match")
+            elif len(new_pass) < 8:
+                st.error("Password must be at least 8 characters")
+            else:
+                result = authenticate_user(st.session_state.username, current_pass)
+                if result['success']:
+                    password_hash, salt = hash_password(new_pass)
+                    execute_query(
+                        "UPDATE users SET password_hash = ?, salt = ? WHERE user_id = ?",
+                        (password_hash, salt, st.session_state.user_id)
+                    )
+                    st.success("Password updated successfully")
                 else:
-                    # Verify current password
-                    result = authenticate_user(st.session_state.username, current_pass)
-                    if result['success']:
-                        # Update password
-                        password_hash, salt = hash_password(new_pass)
-                        execute_query(
-                            "UPDATE users SET password_hash = ?, salt = ? WHERE user_id = ?",
-                            (password_hash, salt, st.session_state.user_id)
-                        )
-                        st.success("Password updated successfully")
-                    else:
-                        st.error("Current password is incorrect")
+                    st.error("Current password is incorrect")
     
     # System Settings
     with st.expander("System Settings"):
@@ -1618,7 +1638,7 @@ def render_settings():
             low_stock_notify = st.checkbox("Low Stock Notifications", value=True)
         
         if st.button("Save System Settings"):
-            st.success("Settings saved successfully")
+            st.success("System settings saved successfully")
     
     # Data Management
     with st.expander("Data Management"):
@@ -1626,14 +1646,13 @@ def render_settings():
         
         with col_data1:
             if st.button("Export All Data", use_container_width=True, type="secondary"):
-                # Export products
                 products = get_products(page_size=1000)
                 if not products.empty:
                     csv_data = products.to_csv(index=False)
                     st.download_button(
-                        label="Download Products CSV",
+                        label="Download All Data",
                         data=csv_data,
-                        file_name="invypro_products_export.csv",
+                        file_name="invypro_export.csv",
                         mime="text/csv",
                         key="export_all"
                     )
@@ -1664,29 +1683,29 @@ def render_settings():
     
     # Danger Zone
     with st.expander("Danger Zone", expanded=False):
-        st.warning("These actions cannot be undone. Proceed with caution.")
+        st.warning("Warning: These actions cannot be undone.")
         
-        if st.button("Reset Organization Data", type="secondary", use_container_width=True):
-            st.error("This will delete ALL products and transactions for your organization.")
-            
-            confirm = st.checkbox("I understand this action cannot be undone")
-            if confirm and st.button("CONFIRM RESET", type="primary", use_container_width=True):
-                try:
-                    org = get_current_organization()
-                    execute_query("DELETE FROM transactions WHERE organization = ?", (org,))
-                    execute_query("DELETE FROM products WHERE organization = ?", (org,))
-                    execute_query("DELETE FROM suppliers WHERE organization = ?", (org,))
-                    
-                    log_activity(
-                        user_id=st.session_state.user_id,
-                        action="data_reset",
-                        details="Reset all organization data"
-                    )
-                    
-                    st.success("Organization data has been reset")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Error resetting data: {str(e)}")
+        reset_confirmed = st.checkbox("I understand this will delete ALL data")
+        
+        if st.button("Reset Organization Data", type="primary", use_container_width=True, disabled=not reset_confirmed):
+            try:
+                org = get_current_organization()
+                
+                # Delete in correct order due to foreign key constraints
+                execute_query("DELETE FROM transactions WHERE organization = ?", (org,))
+                execute_query("DELETE FROM suppliers WHERE organization = ?", (org,))
+                execute_query("DELETE FROM products WHERE organization = ?", (org,))
+                
+                log_activity(
+                    user_id=st.session_state.user_id,
+                    action="data_reset",
+                    details="Reset all organization data"
+                )
+                
+                st.success("Organization data has been reset")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error resetting data: {str(e)}")
 
 # ============================================================================
 # MAIN APPLICATION
@@ -1694,7 +1713,6 @@ def render_settings():
 def main():
     """Main application function"""
     
-    # Initialize database on first run
     if 'db_initialized' not in st.session_state:
         try:
             if Database.test_connection():
@@ -1706,10 +1724,8 @@ def main():
         except Exception as e:
             st.warning(f"Database setup: {str(e)}")
     
-    # Render sidebar
     render_sidebar()
     
-    # Render main content based on current page
     pages = {
         "Dashboard": render_dashboard,
         "Products": render_products,
@@ -1723,19 +1739,17 @@ def main():
     page_func()
     
     # Footer
-    #st.markdown("---")
-    #col_footer1, col_footer2, col_footer3 = st.columns(3)
-    #with col_footer2:
-        #st.caption(f"InvyPro v1.0 • Database: {st.session_state.get('db_type', 'SQLite')}")
+    st.markdown("---")
+    col_footer1, col_footer2, col_footer3 = st.columns(3)
+    with col_footer2:
+        st.caption(f"InvyPro v1.0 • Database: {st.session_state.get('db_type', 'SQLite')}")
 
 # ============================================================================
 # APPLICATION ENTRY POINT
 # ============================================================================
 if __name__ == "__main__":
-    # Create necessary directories
     import os
     os.makedirs("data", exist_ok=True)
     os.makedirs("backups", exist_ok=True)
     
-    # Run the application
     main()
