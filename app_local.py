@@ -1415,6 +1415,9 @@ def render_transactions():
                     ["-- Select Product --"] + list(product_options.keys())
                 )
                 
+                quantity = 1  # Default value
+                unit_price = 0.0  # Default value
+                
                 if selected_product_label != "-- Select Product --":
                     product_id = product_options[selected_product_label]
                     
@@ -1424,7 +1427,7 @@ def render_transactions():
                     col_qty, col_price = st.columns(2)
                     
                     with col_qty:
-                        current_stock = st.info(f"Current Stock: {product_info['quantity']} {product_info['unit']}")
+                        st.info(f"Current Stock: {product_info['quantity']} {product_info['unit']}")
                         quantity = st.number_input(
                             "Quantity *",
                             min_value=1,
@@ -1433,15 +1436,23 @@ def render_transactions():
                             help="Quantity to transact"
                         )
                         
-                        # Validation for negative stock prevention
+                        # Store validation state in session
+                        if 'stock_warning' not in st.session_state:
+                            st.session_state.stock_warning = False
+                        
                         if transaction_type == 'sale' and quantity > product_info['quantity']:
+                            st.session_state.stock_warning = True
                             st.error(f"Insufficient stock! Only {product_info['quantity']} units available.")
+                        else:
+                            st.session_state.stock_warning = False
                     
                     with col_price:
+                        # Determine default price based on transaction type
+                        default_price = product_info['sell_price'] if transaction_type == 'sale' else product_info['cost_price']
                         unit_price = st.number_input(
                             "Unit Price *",
                             min_value=0.0,
-                            value=float(product_info['sell_price'] if transaction_type == 'sale' else product_info['cost_price']),
+                            value=float(default_price),
                             step=0.01,
                             format="%.2f",
                             help="Price per unit"
@@ -1453,71 +1464,83 @@ def render_transactions():
                     
                     # Additional details
                     notes = st.text_area("Notes", help="Additional transaction notes")
-                    
-                    # Submit button
-                    submitted = st.form_submit_button("Record Transaction", type="primary", use_container_width=True)
-                    
-                    if submitted:
-                        if selected_product_label == "-- Select Product --":
-                            st.error("Please select a product")
-                        elif transaction_type == 'sale' and quantity > product_info['quantity']:
-                            st.error("Cannot complete sale: Insufficient stock")
-                        else:
-                            # Record transaction
-                            org = get_current_organization()
-                            try:
-                                # Insert transaction
+                else:
+                    notes = ""
+                
+                # Submit button inside form
+                submitted = st.form_submit_button("Record Transaction", type="primary", use_container_width=True)
+                
+                if submitted:
+                    if selected_product_label == "-- Select Product --":
+                        st.error("Please select a product")
+                    elif getattr(st.session_state, 'stock_warning', False):
+                        st.error("Cannot complete sale: Insufficient stock")
+                    else:
+                        # Record transaction
+                        org = get_current_organization()
+                        try:
+                            # Insert transaction
+                            execute_query(
+                                """
+                                INSERT INTO transactions (
+                                    organization, product_id, type, quantity,
+                                    unit_price, total_amount, reference, notes, created_by
+                                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                """,
+                                (
+                                    org,
+                                    product_id,
+                                    transaction_type,
+                                    quantity,
+                                    unit_price,
+                                    total_amount,
+                                    reference,
+                                    notes,
+                                    st.session_state.user_id
+                                )
+                            )
+                            
+                            # Update product stock based on transaction type
+                            if transaction_type == 'sale':
+                                new_quantity = product_info['quantity'] - quantity
+                            elif transaction_type == 'purchase':
+                                new_quantity = product_info['quantity'] + quantity
+                            elif transaction_type == 'adjustment':
+                                new_quantity = quantity  # Set to exact amount for adjustments
+                            else:  # transfer
+                                new_quantity = product_info['quantity']  # No change for transfers
+                            
+                            # Only update quantity for non-transfer transactions
+                            if transaction_type != 'transfer':
                                 execute_query(
-                                    """
-                                    INSERT INTO transactions (
-                                        organization, product_id, type, quantity,
-                                        unit_price, total_amount, reference, notes, created_by
-                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                                    """,
-                                    (
-                                        org,
-                                        product_id,
-                                        transaction_type,
-                                        quantity,
-                                        unit_price,
-                                        total_amount,
-                                        reference,
-                                        notes,
-                                        st.session_state.user_id
-                                    )
+                                    "UPDATE products SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ?",
+                                    (new_quantity, product_id)
                                 )
-                                
-                                # Update product stock based on transaction type
-                                if transaction_type == 'sale':
-                                    new_quantity = product_info['quantity'] - quantity
-                                elif transaction_type == 'purchase':
-                                    new_quantity = product_info['quantity'] + quantity
-                                elif transaction_type == 'adjustment':
-                                    new_quantity = quantity  # Set to exact amount for adjustments
-                                else:  # transfer
-                                    new_quantity = product_info['quantity']  # No change for transfers
-                                
-                                # Only update quantity for non-transfer transactions
-                                if transaction_type != 'transfer':
-                                    execute_query(
-                                        "UPDATE products SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ?",
-                                        (new_quantity, product_id)
-                                    )
-                                
-                                # Log activity
-                                log_activity(
-                                    user_id=st.session_state.user_id,
-                                    action="transaction_recorded",
-                                    details=f"Recorded {transaction_type} transaction: {quantity} units of {product_info['name']}"
-                                )
-                                
-                                st.success("Transaction recorded successfully!")
-                                st.rerun()
-                                
-                            except Exception as e:
-                                st.error(f"Error recording transaction: {str(e)}")
+                            
+                            # Log activity
+                            log_activity(
+                                user_id=st.session_state.user_id,
+                                action="transaction_recorded",
+                                details=f"Recorded {transaction_type} transaction: {quantity} units of {product_info['name']}"
+                            )
+                            
+                            st.success("Transaction recorded successfully!")
+                            st.rerun()
+                            
+                        except Exception as e:
+                            st.error(f"Error recording transaction: {str(e)}")
             else:
                 st.info("No products found. Please add products first.")
+            
+            # This button should be outside the form condition but still inside the form
+            if products.empty:
+                # We can't put a regular button in a form, so we'll handle this differently
+                pass
+        
+        # Separate button outside form for navigation
+        if products.empty:
+            col1, col2, col3 = st.columns([1, 2, 1])
+            with col2:
                 if st.button("Go to Products", use_container_width=True):
                     st.session_state.page = "Products"
                     st.rerun()
@@ -1627,7 +1650,7 @@ def render_transactions():
                 )
             
             with col_stats:
-                if st.button("Show Statistics", use_container_width=True):
+                if st.button("Show Statistics", use_container_width=True, key="show_stats"):
                     # Calculate statistics
                     total_sales = transactions[transactions['type'] == 'sale']['total_amount'].sum()
                     total_purchases = transactions[transactions['type'] == 'purchase']['total_amount'].sum()
@@ -1645,17 +1668,18 @@ def render_transactions():
         # Report options
         report_type = st.selectbox(
             "Select Report Type",
-            ["Sales Summary", "Purchase Summary", "Daily Transactions", "Product Movement"]
+            ["Sales Summary", "Purchase Summary", "Daily Transactions", "Product Movement"],
+            key="report_type_select"
         )
         
         if report_type == "Sales Summary":
             col_date1, col_date2 = st.columns(2)
             with col_date1:
-                start_date = st.date_input("Start Date")
+                start_date = st.date_input("Start Date", key="sales_start_date")
             with col_date2:
-                end_date = st.date_input("End Date", value=datetime.now().date())
+                end_date = st.date_input("End Date", value=datetime.now().date(), key="sales_end_date")
             
-            if st.button("Generate Sales Report", use_container_width=True):
+            if st.button("Generate Sales Report", use_container_width=True, key="gen_sales_report"):
                 org = get_current_organization()
                 sales_report = fetch_dataframe(
                     """
@@ -1706,7 +1730,8 @@ def render_transactions():
                         label="Download Sales Report",
                         data=csv,
                         file_name=f"sales_report_{start_date}_{end_date}.csv",
-                        mime="text/csv"
+                        mime="text/csv",
+                        key="download_sales_report"
                     )
                 else:
                     st.info("No sales data found for the selected period.")
@@ -1716,9 +1741,9 @@ def render_transactions():
             products = get_products(page_size=1000)
             if not products.empty:
                 product_choices = {f"{row['sku']} - {row['name']}": row['product_id'] for _, row in products.iterrows()}
-                selected_product = st.selectbox("Select Product", list(product_choices.keys()))
+                selected_product = st.selectbox("Select Product", list(product_choices.keys()), key="product_movement_select")
                 
-                if st.button("Generate Movement Report", use_container_width=True):
+                if st.button("Generate Movement Report", use_container_width=True, key="gen_movement_report"):
                     product_id = product_choices[selected_product]
                     org = get_current_organization()
                     
@@ -1871,7 +1896,7 @@ def render_transactions():
                             delta=f"{st.session_state.currency} {row['total']:,.2f}"
                         )
         except:
-            pass
+            st.info("No transaction statistics available yet.")
 
 def render_suppliers():
     """Render suppliers page"""
