@@ -4,7 +4,7 @@ A modern, multi-organization inventory management system built with Streamlit an
 Try it here: [InvyPro 2.0](https://inventory-manager-20-dxq2opqtsxfbkxo93yq6jz.streamlit.app/)
 
 ## App Screenshot:
-![image alt](https://github.com/Omensah-15/Inventory-Manager-2.0/blob/0690e5331500e30b25807d6655cc51668937f93c/App_screenshot.png)
+![image alt](https://github.com/Omensah-15/Inventory-Manager-2.0/blob/6b4eaffa48608e201af7b7c13a02d7fa3803b021/App_screenshot.png)
 
 ## Features
 
