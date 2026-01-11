@@ -841,6 +841,46 @@ def get_key_metrics():
     except Exception as e:
         print(f"Metrics error: {str(e)}")
         return {}
+        
+def get_transactions(org: str, transaction_type: str = None, start_date: str = None, end_date: str = None, limit: int = 100):
+    """Get transactions with filters"""
+    query = """
+        SELECT 
+            t.transaction_id,
+            t.type,
+            t.quantity,
+            t.unit_price,
+            t.total_amount,
+            t.reference,
+            t.notes,
+            t.created_at,
+            p.sku,
+            p.name as product_name,
+            u.username as created_by_name
+        FROM transactions t
+        JOIN products p ON t.product_id = p.product_id
+        LEFT JOIN users u ON t.created_by = u.user_id
+        WHERE t.organization = ?
+    """
+    
+    params = [org]
+    
+    if transaction_type:
+        query += " AND t.type = ?"
+        params.append(transaction_type)
+    
+    if start_date:
+        query += " AND DATE(t.created_at) >= ?"
+        params.append(start_date)
+    
+    if end_date:
+        query += " AND DATE(t.created_at) <= ?"
+        params.append(end_date)
+    
+    query += " ORDER BY t.created_at DESC LIMIT ?"
+    params.append(limit)
+    
+    return fetch_dataframe(query, tuple(params))
 
 # ============================================================================
 # UI COMPONENTS
@@ -1335,20 +1375,503 @@ def render_products():
             st.info("No products available to edit. Add products first.")
 
 def render_transactions():
-    """Render transactions page"""
+    """Render transactions page with full functionality"""
     st.markdown("<h1 class='main-header'>Transactions</h1>", unsafe_allow_html=True)
     
     if not st.session_state.authenticated:
         st.warning("Please login to view transactions")
         return
     
-    st.info("Transactions functionality is currently under development.")
-    st.write("Coming soon features:")
-    st.write("1. Record sales transactions")
-    st.write("2. Process purchase orders")
-    st.write("3. Stock adjustments")
-    st.write("4. Transaction history tracking")
-    st.write("5. Sales reports and analytics")
+    # Tabs for different transaction types
+    tab1, tab2, tab3, tab4 = st.tabs(["Record Transaction", "Transaction History", "Transaction Reports", "About Transactions"])
+    
+    with tab1:
+        # Record Transaction Form
+        with st.form("record_transaction", clear_on_submit=True):
+            st.subheader("Record New Transaction")
+            
+            col_type, col_ref = st.columns(2)
+            
+            with col_type:
+                transaction_type = st.selectbox(
+                    "Transaction Type *",
+                    ["sale", "purchase", "adjustment", "transfer"],
+                    help="Sale: Selling to customers, Purchase: Buying from suppliers, Adjustment: Stock correction, Transfer: Moving between locations"
+                )
+            
+            with col_ref:
+                reference = st.text_input("Reference Number", help="Invoice/Purchase order number")
+            
+            # Product selection
+            st.markdown("### Product Details")
+            
+            # Get products for current organization
+            products = get_products(page_size=1000)
+            
+            if not products.empty:
+                product_options = {f"{row['sku']} - {row['name']}": row['product_id'] for _, row in products.iterrows()}
+                selected_product_label = st.selectbox(
+                    "Select Product *",
+                    ["-- Select Product --"] + list(product_options.keys())
+                )
+                
+                if selected_product_label != "-- Select Product --":
+                    product_id = product_options[selected_product_label]
+                    
+                    # Get product details
+                    product_info = products[products['product_id'] == product_id].iloc[0]
+                    
+                    col_qty, col_price = st.columns(2)
+                    
+                    with col_qty:
+                        current_stock = st.info(f"Current Stock: {product_info['quantity']} {product_info['unit']}")
+                        quantity = st.number_input(
+                            "Quantity *",
+                            min_value=1,
+                            value=1,
+                            step=1,
+                            help="Quantity to transact"
+                        )
+                        
+                        # Validation for negative stock prevention
+                        if transaction_type == 'sale' and quantity > product_info['quantity']:
+                            st.error(f"Insufficient stock! Only {product_info['quantity']} units available.")
+                    
+                    with col_price:
+                        unit_price = st.number_input(
+                            "Unit Price *",
+                            min_value=0.0,
+                            value=float(product_info['sell_price'] if transaction_type == 'sale' else product_info['cost_price']),
+                            step=0.01,
+                            format="%.2f",
+                            help="Price per unit"
+                        )
+                    
+                    # Calculate total
+                    total_amount = quantity * unit_price
+                    st.markdown(f"**Total Amount:** {st.session_state.currency} {total_amount:,.2f}")
+                    
+                    # Additional details
+                    notes = st.text_area("Notes", help="Additional transaction notes")
+                    
+                    # Submit button
+                    submitted = st.form_submit_button("Record Transaction", type="primary", use_container_width=True)
+                    
+                    if submitted:
+                        if selected_product_label == "-- Select Product --":
+                            st.error("Please select a product")
+                        elif transaction_type == 'sale' and quantity > product_info['quantity']:
+                            st.error("Cannot complete sale: Insufficient stock")
+                        else:
+                            # Record transaction
+                            org = get_current_organization()
+                            try:
+                                # Insert transaction
+                                execute_query(
+                                    """
+                                    INSERT INTO transactions (
+                                        organization, product_id, type, quantity,
+                                        unit_price, total_amount, reference, notes, created_by
+                                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    """,
+                                    (
+                                        org,
+                                        product_id,
+                                        transaction_type,
+                                        quantity,
+                                        unit_price,
+                                        total_amount,
+                                        reference,
+                                        notes,
+                                        st.session_state.user_id
+                                    )
+                                )
+                                
+                                # Update product stock based on transaction type
+                                if transaction_type == 'sale':
+                                    new_quantity = product_info['quantity'] - quantity
+                                elif transaction_type == 'purchase':
+                                    new_quantity = product_info['quantity'] + quantity
+                                elif transaction_type == 'adjustment':
+                                    new_quantity = quantity  # Set to exact amount for adjustments
+                                else:  # transfer
+                                    new_quantity = product_info['quantity']  # No change for transfers
+                                
+                                # Only update quantity for non-transfer transactions
+                                if transaction_type != 'transfer':
+                                    execute_query(
+                                        "UPDATE products SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ?",
+                                        (new_quantity, product_id)
+                                    )
+                                
+                                # Log activity
+                                log_activity(
+                                    user_id=st.session_state.user_id,
+                                    action="transaction_recorded",
+                                    details=f"Recorded {transaction_type} transaction: {quantity} units of {product_info['name']}"
+                                )
+                                
+                                st.success("Transaction recorded successfully!")
+                                st.rerun()
+                                
+                            except Exception as e:
+                                st.error(f"Error recording transaction: {str(e)}")
+            else:
+                st.info("No products found. Please add products first.")
+                if st.button("Go to Products", use_container_width=True):
+                    st.session_state.page = "Products"
+                    st.rerun()
+    
+    with tab2:
+        # Transaction History
+        st.subheader("Transaction History")
+        
+        # Filters
+        col_filter1, col_filter2, col_filter3 = st.columns(3)
+        
+        with col_filter1:
+            filter_type = st.selectbox(
+                "Filter by Type",
+                ["All", "sale", "purchase", "adjustment", "transfer"]
+            )
+        
+        with col_filter2:
+            date_range = st.selectbox(
+                "Date Range",
+                ["Last 7 days", "Last 30 days", "Last 90 days", "All time"]
+            )
+        
+        with col_filter3:
+            limit_records = st.number_input("Show Records", min_value=10, max_value=500, value=50, step=10)
+        
+        # Build query based on filters
+        org = get_current_organization()
+        query = """
+            SELECT 
+                t.transaction_id,
+                t.type,
+                t.quantity,
+                t.unit_price,
+                t.total_amount,
+                t.reference,
+                t.notes,
+                t.created_at,
+                p.sku,
+                p.name as product_name,
+                u.username as created_by_name
+            FROM transactions t
+            JOIN products p ON t.product_id = p.product_id
+            LEFT JOIN users u ON t.created_by = u.user_id
+            WHERE t.organization = ?
+        """
+        
+        params = [org]
+        
+        # Apply type filter
+        if filter_type != "All":
+            query += " AND t.type = ?"
+            params.append(filter_type)
+        
+        # Apply date range filter
+        if date_range == "Last 7 days":
+            query += " AND t.created_at >= datetime('now', '-7 days')"
+        elif date_range == "Last 30 days":
+            query += " AND t.created_at >= datetime('now', '-30 days')"
+        elif date_range == "Last 90 days":
+            query += " AND t.created_at >= datetime('now', '-90 days')"
+        
+        query += " ORDER BY t.created_at DESC LIMIT ?"
+        params.append(limit_records)
+        
+        # Execute query
+        transactions = fetch_dataframe(query, tuple(params))
+        
+        if not transactions.empty:
+            # Format display
+            display_df = transactions.copy()
+            
+            # Format currency columns
+            display_df['unit_price'] = display_df['unit_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
+            display_df['total_amount'] = display_df['total_amount'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
+            
+            # Format transaction type with colors
+            def format_type(t_type):
+                colors = {
+                    'sale': 'badge-success',
+                    'purchase': 'badge-info',
+                    'adjustment': 'badge-warning',
+                    'transfer': 'badge-secondary'
+                }
+                color = colors.get(t_type, 'badge-secondary')
+                return f'<span class="badge {color}">{t_type.upper()}</span>'
+            
+            display_df['type'] = display_df['type'].apply(format_type)
+            
+            # Display transactions
+            html_table = display_df[['created_at', 'type', 'sku', 'product_name', 'quantity', 'unit_price', 'total_amount', 'reference', 'created_by_name']].to_html(
+                escape=False, index=False, classes='dataframe', border=0
+            )
+            st.markdown(html_table, unsafe_allow_html=True)
+            
+            # Export option
+            col_export, col_stats = st.columns(2)
+            
+            with col_export:
+                csv_data = transactions.to_csv(index=False)
+                st.download_button(
+                    label="Export Transaction History",
+                    data=csv_data,
+                    file_name="transaction_history.csv",
+                    mime="text/csv",
+                    use_container_width=True
+                )
+            
+            with col_stats:
+                if st.button("Show Statistics", use_container_width=True):
+                    # Calculate statistics
+                    total_sales = transactions[transactions['type'] == 'sale']['total_amount'].sum()
+                    total_purchases = transactions[transactions['type'] == 'purchase']['total_amount'].sum()
+                    
+                    st.metric("Total Sales", f"{st.session_state.currency} {total_sales:,.2f}")
+                    st.metric("Total Purchases", f"{st.session_state.currency} {total_purchases:,.2f}")
+                    st.metric("Transaction Count", len(transactions))
+        else:
+            st.info("No transactions found. Record your first transaction in the 'Record Transaction' tab.")
+    
+    with tab3:
+        # Transaction Reports
+        st.subheader("Transaction Reports")
+        
+        # Report options
+        report_type = st.selectbox(
+            "Select Report Type",
+            ["Sales Summary", "Purchase Summary", "Daily Transactions", "Product Movement"]
+        )
+        
+        if report_type == "Sales Summary":
+            col_date1, col_date2 = st.columns(2)
+            with col_date1:
+                start_date = st.date_input("Start Date")
+            with col_date2:
+                end_date = st.date_input("End Date", value=datetime.now().date())
+            
+            if st.button("Generate Sales Report", use_container_width=True):
+                org = get_current_organization()
+                sales_report = fetch_dataframe(
+                    """
+                    SELECT 
+                        DATE(t.created_at) as sale_date,
+                        p.sku,
+                        p.name,
+                        SUM(t.quantity) as total_quantity,
+                        SUM(t.total_amount) as total_amount,
+                        COUNT(*) as transaction_count
+                    FROM transactions t
+                    JOIN products p ON t.product_id = p.product_id
+                    WHERE t.organization = ? 
+                        AND t.type = 'sale'
+                        AND DATE(t.created_at) BETWEEN ? AND ?
+                    GROUP BY DATE(t.created_at), p.product_id
+                    ORDER BY sale_date DESC, total_amount DESC
+                    """,
+                    (org, start_date.strftime('%Y-%m-%d'), end_date.strftime('%Y-%m-%d'))
+                )
+                
+                if not sales_report.empty:
+                    st.dataframe(
+                        sales_report,
+                        use_container_width=True,
+                        column_config={
+                            "sale_date": "Date",
+                            "sku": "SKU",
+                            "name": "Product",
+                            "total_quantity": "Quantity Sold",
+                            "total_amount": "Total Sales",
+                            "transaction_count": "Transaction Count"
+                        }
+                    )
+                    
+                    # Sales chart
+                    chart_data = sales_report.groupby('sale_date')['total_amount'].sum().reset_index()
+                    chart = alt.Chart(chart_data).mark_bar().encode(
+                        x='sale_date:T',
+                        y='total_amount:Q',
+                        tooltip=['sale_date', 'total_amount']
+                    ).properties(height=300, title="Daily Sales")
+                    st.altair_chart(chart, use_container_width=True)
+                    
+                    # Export
+                    csv = sales_report.to_csv(index=False)
+                    st.download_button(
+                        label="Download Sales Report",
+                        data=csv,
+                        file_name=f"sales_report_{start_date}_{end_date}.csv",
+                        mime="text/csv"
+                    )
+                else:
+                    st.info("No sales data found for the selected period.")
+        
+        elif report_type == "Product Movement":
+            # Get product list for selection
+            products = get_products(page_size=1000)
+            if not products.empty:
+                product_choices = {f"{row['sku']} - {row['name']}": row['product_id'] for _, row in products.iterrows()}
+                selected_product = st.selectbox("Select Product", list(product_choices.keys()))
+                
+                if st.button("Generate Movement Report", use_container_width=True):
+                    product_id = product_choices[selected_product]
+                    org = get_current_organization()
+                    
+                    movement_report = fetch_dataframe(
+                        """
+                        SELECT 
+                            t.created_at,
+                            t.type,
+                            t.quantity,
+                            t.unit_price,
+                            t.total_amount,
+                            t.reference,
+                            t.notes,
+                            u.username
+                        FROM transactions t
+                        LEFT JOIN users u ON t.created_by = u.user_id
+                        WHERE t.organization = ? AND t.product_id = ?
+                        ORDER BY t.created_at DESC
+                        LIMIT 100
+                        """,
+                        (org, product_id)
+                    )
+                    
+                    if not movement_report.empty:
+                        st.dataframe(
+                            movement_report,
+                            use_container_width=True,
+                            column_config={
+                                "created_at": "Date",
+                                "type": "Type",
+                                "quantity": "Quantity",
+                                "unit_price": "Unit Price",
+                                "total_amount": "Total",
+                                "reference": "Reference",
+                                "notes": "Notes",
+                                "username": "User"
+                            }
+                        )
+                        
+                        # Stock level over time simulation
+                        st.subheader("Stock Level History")
+                        
+                        # Get current product
+                        product_info = products[products['product_id'] == product_id].iloc[0]
+                        
+                        # Create timeline data
+                        timeline_data = []
+                        current_stock = product_info['quantity']
+                        
+                        # Add current stock
+                        timeline_data.append({
+                            'date': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                            'stock': current_stock,
+                            'event': 'Current Stock'
+                        })
+                        
+                        # Process transactions in reverse chronological order
+                        for _, row in movement_report.iloc[::-1].iterrows():
+                            if row['type'] == 'purchase':
+                                current_stock -= row['quantity']
+                            elif row['type'] == 'sale':
+                                current_stock += row['quantity']
+                            
+                            timeline_data.append({
+                                'date': row['created_at'].strftime('%Y-%m-%d %H:%M:%S'),
+                                'stock': current_stock,
+                                'event': f"{row['type'].upper()}: {row['quantity']} units"
+                            })
+                        
+                        timeline_df = pd.DataFrame(timeline_data)
+                        
+                        # Create chart
+                        line_chart = alt.Chart(timeline_df).mark_line(point=True).encode(
+                            x='date:T',
+                            y='stock:Q',
+                            tooltip=['date', 'stock', 'event']
+                        ).properties(height=300, title="Stock Level Over Time")
+                        
+                        st.altair_chart(line_chart, use_container_width=True)
+                        
+                    else:
+                        st.info("No transaction history found for this product.")
+    
+    with tab4:
+        # Transaction Information
+        st.subheader("About Transactions")
+        
+        col_info1, col_info2 = st.columns(2)
+        
+        with col_info1:
+            st.markdown("### Transaction Types")
+            
+            st.markdown("""
+            **Sales**
+            - Record customer sales
+            - Reduce stock levels
+            - Track revenue
+            
+            **Purchases**
+            - Record supplier purchases
+            - Increase stock levels
+            - Track costs
+            
+            **Adjustments**
+            - Correct stock counts
+            - Fix discrepancies
+            - Update physical counts
+            """)
+        
+        with col_info2:
+            st.markdown("### Best Practices")
+            
+            st.markdown("""
+            1. **Record transactions promptly**
+            2. **Verify quantities before confirming**
+            3. **Use reference numbers for tracking**
+            4. **Review transaction history regularly**
+            5. **Export reports for accounting**
+            6. **Keep notes for audit trails**
+            """)
+        
+        st.markdown("---")
+        
+        # Quick Stats
+        st.subheader("Quick Statistics")
+        
+        org = get_current_organization()
+        try:
+            # Get transaction counts
+            counts = fetch_dataframe(
+                """
+                SELECT 
+                    type,
+                    COUNT(*) as count,
+                    SUM(total_amount) as total
+                FROM transactions 
+                WHERE organization = ? 
+                GROUP BY type
+                """,
+                (org,)
+            )
+            
+            if not counts.empty:
+                cols = st.columns(len(counts))
+                for idx, (_, row) in enumerate(counts.iterrows()):
+                    with cols[idx]:
+                        st.metric(
+                            label=f"{row['type'].title()}s",
+                            value=row['count'],
+                            delta=f"{st.session_state.currency} {row['total']:,.2f}"
+                        )
+        except:
+            pass
 
 def render_suppliers():
     """Render suppliers page"""
