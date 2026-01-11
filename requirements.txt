@@ -4,4 +4,3 @@ altair>=5.0.0
 psycopg2-binary>=2.9.0
 python-dotenv>=1.0.0
 pytz>=2023.0
-numpy>=1.24.0
