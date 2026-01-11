@@ -1,26 +1,17 @@
 """
-InvyPro — Inventory Manager (PostgreSQL Edition)
-- Multi-user with organization isolation
-- PostgreSQL database support
-- Local/offline deployment ready
-- Professional production-ready features
+InvyPro - Inventory Management System
+PostgreSQL Edition | Multi-Organization | Production Ready
 """
 
 import os
-import sys
 import secrets
 import hashlib
 import hmac
-import time
-import random
-import json
 import psycopg2
 from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Optional, Tuple, Dict, Any, List
 from psycopg2.extras import RealDictCursor
-from urllib.parse import urlparse
-
 import pandas as pd
 import streamlit as st
 import altair as alt
@@ -30,51 +21,47 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# ---------------------------
-# Configuration
-# ---------------------------
+# ============================================================================
+# CONFIGURATION
+# ============================================================================
 class Config:
-    """Configuration management"""
-    @staticmethod
-    def get_db_config():
-        """Get database configuration from environment or defaults"""
-        return {
-            'host': os.getenv('DB_HOST', 'localhost'),
-            'port': os.getenv('DB_PORT', '5432'),
-            'database': os.getenv('DB_NAME', 'invypro'),
-            'user': os.getenv('DB_USER', 'invypro_user'),
-            'password': os.getenv('DB_PASSWORD', 'invypro_pass'),
-            'sslmode': os.getenv('DB_SSLMODE', 'disable')
-        }
+    """Application Configuration"""
+    DB_CONFIG = {
+        'host': os.getenv('DB_HOST', 'localhost'),
+        'port': os.getenv('DB_PORT', '5432'),
+        'database': os.getenv('DB_NAME', 'invypro'),
+        'user': os.getenv('DB_USER', 'invypro_user'),
+        'password': os.getenv('DB_PASSWORD', 'invypro_pass'),
+        'sslmode': os.getenv('DB_SSLMODE', 'disable')
+    }
     
-    @staticmethod
-    def get_app_config():
-        """Get application configuration"""
-        return {
-            'session_timeout': int(os.getenv('SESSION_TIMEOUT', '3600')),
-            'max_login_attempts': int(os.getenv('MAX_LOGIN_ATTEMPTS', '5')),
-            'lockout_minutes': int(os.getenv('LOCKOUT_MINUTES', '15')),
-            'backup_dir': os.getenv('BACKUP_DIR', './backups')
-        }
+    APP_CONFIG = {
+        'session_timeout': int(os.getenv('SESSION_TIMEOUT', '3600')),
+        'max_login_attempts': int(os.getenv('MAX_LOGIN_ATTEMPTS', '5')),
+        'lockout_minutes': int(os.getenv('LOCKOUT_MINUTES', '15')),
+        'default_currency': os.getenv('DEFAULT_CURRENCY', 'USD'),
+        'default_timezone': os.getenv('DEFAULT_TIMEZONE', 'UTC')
+    }
 
-# Initialize config
+# Initialize configuration
 config = Config()
 
-# ---------------------------
-# App config
-# ---------------------------
+# ============================================================================
+# STREAMLIT PAGE CONFIG
+# ============================================================================
 st.set_page_config(
-    page_title="InvyPro — Inventory Manager",
-    page_icon=":package:",
+    page_title="InvyPro Inventory Manager",
+    page_icon="📦",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# ---------------------------
-# CSS Styling
-# ---------------------------
+# ============================================================================
+# CUSTOM CSS
+# ============================================================================
 st.markdown("""
 <style>
+    /* Main Theme */
     :root {
         --primary: #2563eb;
         --primary-dark: #1d4ed8;
@@ -87,97 +74,68 @@ st.markdown("""
         --border: #e2e8f0;
     }
     
+    /* Typography */
     .main-header {
         font-size: 2.5rem;
         font-weight: 700;
-        background: linear-gradient(135deg, var(--primary), var(--success));
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        margin-bottom: 1rem;
+        color: var(--primary);
+        margin-bottom: 1.5rem;
+        padding-bottom: 0.5rem;
+        border-bottom: 2px solid var(--border);
     }
     
-    .card {
+    .section-header {
+        font-size: 1.5rem;
+        font-weight: 600;
+        color: var(--dark);
+        margin: 1.5rem 0 1rem 0;
+    }
+    
+    /* Cards */
+    .metric-card {
         background: white;
         border-radius: 12px;
         padding: 1.5rem;
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+        box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
         border: 1px solid var(--border);
-        margin-bottom: 1rem;
+        transition: transform 0.2s, box-shadow 0.2s;
     }
     
-    .card-title {
-        font-size: 1.1rem;
-        font-weight: 600;
-        color: var(--dark);
+    .metric-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12);
+    }
+    
+    .metric-title {
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: var(--secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
         margin-bottom: 0.5rem;
     }
     
-    .card-value {
+    .metric-value {
         font-size: 2rem;
         font-weight: 700;
         color: var(--primary);
         margin: 0.5rem 0;
     }
     
-    .card-subtitle {
+    .metric-trend {
         font-size: 0.85rem;
-        color: var(--secondary);
+        color: var(--success);
+        margin-top: 0.25rem;
     }
     
-    .badge {
-        display: inline-block;
-        padding: 0.25rem 0.75rem;
-        border-radius: 999px;
-        font-size: 0.75rem;
-        font-weight: 600;
-        text-transform: uppercase;
-        letter-spacing: 0.5px;
-    }
-    
-    .badge-success {
-        background-color: #d1fae5;
-        color: #065f46;
-    }
-    
-    .badge-warning {
-        background-color: #fef3c7;
-        color: #92400e;
-    }
-    
-    .badge-danger {
-        background-color: #fee2e2;
-        color: #991b1b;
-    }
-    
-    .badge-info {
-        background-color: #dbeafe;
-        color: #1e40af;
-    }
-    
+    /* Buttons */
     .stButton > button {
         border-radius: 8px;
-        font-weight: 600;
-        transition: all 0.2s;
+        font-weight: 500;
+        padding: 0.5rem 1rem;
     }
     
-    .stButton > button:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-    }
-    
-    .sidebar .sidebar-content {
-        background: linear-gradient(180deg, #f8fafc, #ffffff);
-    }
-    
-    .dataframe {
-        border-radius: 8px;
-        overflow: hidden;
-    }
-    
-    .stAlert {
-        border-radius: 8px;
-    }
-    
+    /* Forms */
     .stTextInput > div > div > input,
     .stNumberInput > div > div > input,
     .stSelectbox > div > div > select {
@@ -185,54 +143,71 @@ st.markdown("""
         border: 1px solid var(--border);
     }
     
-    .feature-card {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        padding: 1.5rem;
-        border-radius: 12px;
-        margin: 1rem 0;
+    /* Data Tables */
+    .dataframe {
+        border-radius: 8px;
+        border: 1px solid var(--border);
     }
     
-    .feature-card h3 {
-        color: white;
-        margin-bottom: 0.5rem;
+    /* Badges */
+    .status-badge {
+        display: inline-block;
+        padding: 0.25rem 0.75rem;
+        border-radius: 20px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
     }
     
-    .feature-card p {
-        color: rgba(255, 255, 255, 0.9);
-        font-size: 0.9rem;
+    .status-in-stock {
+        background-color: #d1fae5;
+        color: #065f46;
+    }
+    
+    .status-low-stock {
+        background-color: #fef3c7;
+        color: #92400e;
+    }
+    
+    .status-out-of-stock {
+        background-color: #fee2e2;
+        color: #991b1b;
+    }
+    
+    /* Sidebar */
+    .sidebar .sidebar-content {
+        background: linear-gradient(180deg, #f8fafc 0%, #ffffff 100%);
+        border-right: 1px solid var(--border);
     }
 </style>
 """, unsafe_allow_html=True)
 
-# ---------------------------
-# Database Connection
-# ---------------------------
+# ============================================================================
+# DATABASE MANAGEMENT
+# ============================================================================
 class Database:
-    """Database connection manager"""
-    _conn = None
+    """Database connection manager with connection pooling"""
+    _connection = None
     
     @classmethod
     def get_connection(cls):
         """Get or create database connection"""
-        if cls._conn is None or cls._conn.closed:
+        if cls._connection is None or cls._connection.closed:
             try:
-                db_config = config.get_db_config()
-                cls._conn = psycopg2.connect(**db_config)
-                cls._conn.autocommit = False
-                st.session_state.db_connected = True
+                cls._connection = psycopg2.connect(**config.DB_CONFIG)
+                cls._connection.autocommit = False
+                return cls._connection
             except Exception as e:
                 st.error(f"Database connection failed: {str(e)}")
-                st.session_state.db_connected = False
                 return None
-        return cls._conn
+        return cls._connection
     
     @classmethod
     def close_connection(cls):
         """Close database connection"""
-        if cls._conn and not cls._conn.closed:
-            cls._conn.close()
-            cls._conn = None
+        if cls._connection and not cls._connection.closed:
+            cls._connection.close()
+            cls._connection = None
     
     @classmethod
     def test_connection(cls):
@@ -249,7 +224,7 @@ class Database:
 
 @contextmanager
 def db_session():
-    """Context manager for database sessions"""
+    """Context manager for database transactions"""
     conn = Database.get_connection()
     if conn is None:
         raise ConnectionError("Database connection not available")
@@ -257,12 +232,12 @@ def db_session():
     try:
         yield conn
         conn.commit()
-    except Exception as e:
+    except Exception:
         conn.rollback()
-        raise e
+        raise
 
-def run_query(query: str, params: Tuple = (), fetch: bool = False):
-    """Execute a query and optionally fetch results"""
+def execute_query(query: str, params: Tuple = (), fetch: bool = False):
+    """Execute SQL query with parameters"""
     with db_session() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(query, params)
@@ -270,17 +245,17 @@ def run_query(query: str, params: Tuple = (), fetch: bool = False):
                 return cur.fetchall()
             return cur.rowcount
 
-def fetch_df(query: str, params: Tuple = ()) -> pd.DataFrame:
+def fetch_dataframe(query: str, params: Tuple = ()) -> pd.DataFrame:
     """Fetch query results as pandas DataFrame"""
     with db_session() as conn:
         return pd.read_sql_query(query, conn, params=params)
 
-# ---------------------------
-# Database Initialization
-# ---------------------------
-def init_database():
-    """Initialize PostgreSQL database schema"""
-    init_queries = [
+# ============================================================================
+# DATABASE INITIALIZATION
+# ============================================================================
+def initialize_database():
+    """Initialize database schema"""
+    schema_queries = [
         # Enable UUID extension
         "CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\";",
         
@@ -301,17 +276,52 @@ def init_database():
         );
         """,
         
-        # Organizations table (enhanced)
+        # Products table
         """
-        CREATE TABLE IF NOT EXISTS organizations (
-            org_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-            name VARCHAR(200) UNIQUE NOT NULL,
-            contact_email VARCHAR(255),
-            phone VARCHAR(50),
-            address TEXT,
-            settings JSONB DEFAULT '{}',
+        CREATE TABLE IF NOT EXISTS products (
+            product_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+            organization VARCHAR(200) NOT NULL,
+            sku VARCHAR(100) NOT NULL,
+            name VARCHAR(200) NOT NULL,
+            description TEXT,
+            category VARCHAR(100),
+            supplier VARCHAR(200),
+            unit VARCHAR(50) DEFAULT 'pcs',
+            cost_price DECIMAL(15, 2) DEFAULT 0,
+            sell_price DECIMAL(15, 2) DEFAULT 0,
+            quantity INTEGER DEFAULT 0,
+            min_quantity INTEGER DEFAULT 0,
+            reorder_level INTEGER DEFAULT 0,
+            location VARCHAR(100),
+            barcode VARCHAR(100),
+            notes TEXT,
+            is_active BOOLEAN DEFAULT TRUE,
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            is_active BOOLEAN DEFAULT TRUE
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(organization, sku),
+            CHECK (cost_price >= 0),
+            CHECK (sell_price >= 0),
+            CHECK (quantity >= 0)
+        );
+        """,
+        
+        # Transactions table
+        """
+        CREATE TABLE IF NOT EXISTS transactions (
+            transaction_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+            organization VARCHAR(200) NOT NULL,
+            product_id UUID NOT NULL REFERENCES products(product_id) ON DELETE CASCADE,
+            type VARCHAR(50) NOT NULL,
+            quantity INTEGER NOT NULL,
+            unit_price DECIMAL(15, 2) DEFAULT 0,
+            total_amount DECIMAL(15, 2) DEFAULT 0,
+            reference VARCHAR(100),
+            notes TEXT,
+            status VARCHAR(50) DEFAULT 'completed',
+            created_by UUID REFERENCES users(user_id),
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            CHECK (type IN ('sale', 'purchase', 'adjustment', 'transfer')),
+            CHECK (status IN ('pending', 'completed', 'cancelled'))
         );
         """,
         
@@ -321,111 +331,37 @@ def init_database():
             supplier_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
             organization VARCHAR(200) NOT NULL,
             name VARCHAR(200) NOT NULL,
-            phone VARCHAR(50),
+            contact_person VARCHAR(200),
             email VARCHAR(255),
+            phone VARCHAR(50),
             address TEXT,
-            tax_id VARCHAR(100),
             payment_terms TEXT,
-            rating INTEGER DEFAULT 0,
             is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(organization, name)
-        );
-        """,
-        
-        # Categories table
-        """
-        CREATE TABLE IF NOT EXISTS categories (
-            category_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-            organization VARCHAR(200) NOT NULL,
-            name VARCHAR(100) NOT NULL,
-            description TEXT,
-            parent_id UUID REFERENCES categories(category_id),
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
             UNIQUE(organization, name)
         );
         """,
         
-        # Products table
+        # Activity logs
         """
-        CREATE TABLE IF NOT EXISTS products (
-            product_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-            organization VARCHAR(200) NOT NULL,
-            sku VARCHAR(100) NOT NULL,
-            name VARCHAR(200) NOT NULL,
-            description TEXT,
-            category_id UUID REFERENCES categories(category_id),
-            supplier_id UUID REFERENCES suppliers(supplier_id),
-            unit VARCHAR(50) DEFAULT 'pcs',
-            cost_price DECIMAL(15, 4) DEFAULT 0,
-            sell_price DECIMAL(15, 4) DEFAULT 0,
-            qty INTEGER DEFAULT 0,
-            min_qty INTEGER DEFAULT 0,
-            max_qty INTEGER DEFAULT 10000,
-            reorder_level INTEGER DEFAULT 0,
-            location VARCHAR(100),
-            barcode VARCHAR(100),
-            weight DECIMAL(10, 3),
-            dimensions VARCHAR(100),
-            is_active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            UNIQUE(organization, sku),
-            CHECK (cost_price >= 0),
-            CHECK (sell_price >= 0),
-            CHECK (qty >= 0),
-            CHECK (min_qty >= 0),
-            CHECK (max_qty >= min_qty)
-        );
-        """,
-        
-        # Transactions table
-        """
-        CREATE TABLE IF NOT EXISTS transactions (
-            txn_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-            organization VARCHAR(200) NOT NULL,
-            product_id UUID NOT NULL REFERENCES products(product_id) ON DELETE CASCADE,
-            type VARCHAR(50) NOT NULL,
-            quantity INTEGER NOT NULL,
-            unit_price DECIMAL(15, 4) DEFAULT 0,
-            total_amount DECIMAL(15, 4) DEFAULT 0,
-            reference VARCHAR(100),
-            customer_name VARCHAR(200),
-            customer_email VARCHAR(255),
-            note TEXT,
-            status VARCHAR(50) DEFAULT 'completed',
-            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-            created_by UUID REFERENCES users(user_id),
-            CHECK (type IN ('sale', 'restock', 'adjustment', 'transfer', 'damage', 'return')),
-            CHECK (status IN ('pending', 'completed', 'cancelled'))
-        );
-        """,
-        
-        # Inventory logs (detailed tracking)
-        """
-        CREATE TABLE IF NOT EXISTS inventory_logs (
+        CREATE TABLE IF NOT EXISTS activity_logs (
             log_id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
             organization VARCHAR(200) NOT NULL,
-            product_id UUID REFERENCES products(product_id),
             user_id UUID REFERENCES users(user_id),
             action VARCHAR(100) NOT NULL,
-            old_value JSONB,
-            new_value JSONB,
-            ip_address INET,
-            user_agent TEXT,
+            details TEXT,
+            ip_address VARCHAR(50),
             created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
         """,
         
-        # Create indexes for performance
+        # Create indexes
         "CREATE INDEX IF NOT EXISTS idx_products_org ON products(organization);",
         "CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);",
         "CREATE INDEX IF NOT EXISTS idx_transactions_org ON transactions(organization);",
         "CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(created_at);",
-        "CREATE INDEX IF NOT EXISTS idx_users_org ON users(organization);",
         
-        # Create triggers for updated_at
+        # Update timestamp trigger
         """
         CREATE OR REPLACE FUNCTION update_updated_at_column()
         RETURNS TRIGGER AS $$
@@ -434,17 +370,9 @@ def init_database():
             RETURN NEW;
         END;
         $$ language 'plpgsql';
-        """,
         
-        """
-        CREATE TRIGGER update_products_updated_at 
+        CREATE TRIGGER update_products_timestamp 
             BEFORE UPDATE ON products 
-            FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-        """,
-        
-        """
-        CREATE TRIGGER update_suppliers_updated_at 
-            BEFORE UPDATE ON suppliers 
             FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
         """
     ]
@@ -452,27 +380,28 @@ def init_database():
     try:
         with db_session() as conn:
             with conn.cursor() as cur:
-                for query in init_queries:
+                for query in schema_queries:
                     try:
                         cur.execute(query)
                     except Exception as e:
-                        conn.rollback()
                         if "already exists" not in str(e):
-                            st.warning(f"Schema init warning: {str(e)}")
+                            print(f"Schema note: {str(e)}")
                         continue
-        # Create default admin user if no users exist
+        
+        # Create default admin user
         create_default_admin()
         st.success("Database initialized successfully")
+        return True
     except Exception as e:
         st.error(f"Database initialization failed: {str(e)}")
+        return False
 
 def create_default_admin():
     """Create default admin user if no users exist"""
     try:
-        # Check if any users exist
-        result = run_query("SELECT COUNT(*) as count FROM users;", fetch=True)
+        # Check if users exist
+        result = execute_query("SELECT COUNT(*) as count FROM users;", fetch=True)
         if result and result[0]['count'] == 0:
-            # Create default admin user
             username = "admin"
             password = "admin123"
             organization = "Default Organization"
@@ -485,33 +414,23 @@ def create_default_admin():
                 100000
             ).hex()
             
-            run_query(
+            execute_query(
                 """
-                INSERT INTO users (username, password_hash, salt, organization, role, is_active)
-                VALUES (%s, %s, %s, %s, 'admin', TRUE)
+                INSERT INTO users (username, password_hash, salt, organization, role)
+                VALUES (%s, %s, %s, %s, 'admin')
                 """,
                 (username, password_hash, salt, organization)
             )
             
-            # Also create organization record
-            run_query(
-                """
-                INSERT INTO organizations (name, contact_email, is_active)
-                VALUES (%s, %s, TRUE)
-                ON CONFLICT (name) DO NOTHING
-                """,
-                (organization, "admin@example.com")
-            )
-            
-            print("Default admin user created: admin / admin123")
+            print(f"Created default admin: {username} / {password}")
     except Exception as e:
-        print(f"Warning: Could not create default admin: {str(e)}")
+        print(f"Note: {str(e)}")
 
-# ---------------------------
-# Security Utilities
-# ---------------------------
+# ============================================================================
+# SECURITY & AUTHENTICATION
+# ============================================================================
 def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
-    """Hash password with PBKDF2"""
+    """Hash password using PBKDF2"""
     if salt is None:
         salt = secrets.token_hex(32)
     h = hashlib.pbkdf2_hmac(
@@ -522,43 +441,12 @@ def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
     ).hex()
     return h, salt
 
-def verify_password(stored_hash: str, stored_salt: str, provided_password: str) -> bool:
+def verify_password(stored_hash: str, stored_salt: str, password: str) -> bool:
     """Verify password against stored hash"""
-    computed, _ = hash_password(provided_password, stored_salt)
+    computed, _ = hash_password(password, stored_salt)
     return hmac.compare_digest(computed, stored_hash)
 
-# ---------------------------
-# Session Management
-# ---------------------------
-def init_session_state():
-    """Initialize session state variables"""
-    defaults = {
-        'authenticated': False,
-        'username': None,
-        'user_id': None,
-        'organization': None,
-        'role': 'staff',
-        'timezone': 'UTC',
-        'currency': 'USD',
-        'prevent_negative_stock': True,
-        'demo_mode': True,
-        'login_attempts': {},
-        'db_connected': False,
-        'page': 'Dashboard',
-        'sidebar_expanded': True,
-        'theme': 'light'
-    }
-    
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-init_session_state()
-
-# ---------------------------
-# Authentication Functions
-# ---------------------------
-def signup(username: str, email: str, password: str, organization: str):
+def register_user(username: str, email: str, password: str, organization: str):
     """Register new user"""
     username = username.strip().lower()
     organization = organization.strip()
@@ -570,42 +458,21 @@ def signup(username: str, email: str, password: str, organization: str):
     if len(password) < 8:
         return {"success": False, "message": "Password must be at least 8 characters"}
     
-    phash, salt = hash_password(password)
+    password_hash, salt = hash_password(password)
     
     try:
-        with db_session() as conn:
-            with conn.cursor() as cur:
-                # Check if organization exists in organizations table
-                cur.execute(
-                    "SELECT org_id FROM organizations WHERE name = %s",
-                    (organization,)
-                )
-                org_exists = cur.fetchone()
-                
-                # Create organization if not exists
-                if not org_exists:
-                    cur.execute(
-                        "INSERT INTO organizations (name, contact_email) VALUES (%s, %s) RETURNING org_id",
-                        (organization, email)
-                    )
-                
-                # Create user
-                cur.execute(
-                    """
-                    INSERT INTO users (username, email, password_hash, salt, organization, role)
-                    VALUES (%s, %s, %s, %s, %s, 'admin')
-                    RETURNING user_id
-                    """,
-                    (username, email, phash, salt, organization)
-                )
-                
-                user_id = cur.fetchone()[0]
-                
-        # Log activity
+        execute_query(
+            """
+            INSERT INTO users (username, email, password_hash, salt, organization, role)
+            VALUES (%s, %s, %s, %s, %s, 'admin')
+            """,
+            (username, email, password_hash, salt, organization)
+        )
+        
         log_activity(
-            user_id=user_id,
-            action="signup",
-            details=f"User registered for organization: {organization}"
+            user_id=None,
+            action="user_registration",
+            details=f"New user registered: {username} for {organization}"
         )
         
         return {"success": True, "message": "Account created successfully"}
@@ -613,150 +480,71 @@ def signup(username: str, email: str, password: str, organization: str):
     except psycopg2.IntegrityError as e:
         if "users_username_key" in str(e):
             return {"success": False, "message": "Username already exists"}
-        elif "organizations_name_key" in str(e):
-            return {"success": False, "message": "Organization name already exists"}
         else:
-            return {"success": False, "message": "Registration failed. Please try different details."}
+            return {"success": False, "message": "Registration failed"}
     except Exception as e:
-        return {"success": False, "message": f"Registration error: {str(e)}"}
+        return {"success": False, "message": f"Error: {str(e)}"}
 
-def login(username: str, password: str):
+def authenticate_user(username: str, password: str):
     """Authenticate user"""
     username = username.strip().lower()
     
     if not username or not password:
         return {"success": False, "message": "Username and password required"}
     
-    # Check lockout
-    lockout_time = check_lockout(username)
-    if lockout_time:
-        return {"success": False, "message": f"Account locked. Try again in {lockout_time} minutes"}
-    
     try:
-        with db_session() as conn:
-            with conn.cursor(cursor_factory=RealDictCursor) as cur:
-                cur.execute(
-                    """
-                    SELECT user_id, username, password_hash, salt, organization, role, is_active
-                    FROM users 
-                    WHERE username = %s
-                    """,
-                    (username,)
-                )
-                user = cur.fetchone()
+        result = execute_query(
+            """
+            SELECT user_id, username, password_hash, salt, organization, role, is_active
+            FROM users WHERE username = %s
+            """,
+            (username,),
+            fetch=True
+        )
         
-        if not user:
-            record_failed_attempt(username)
+        if not result:
             return {"success": False, "message": "Invalid credentials"}
         
+        user = result[0]
+        
         if not user['is_active']:
-            return {"success": False, "message": "Account deactivated"}
+            return {"success": False, "message": "Account is inactive"}
         
         if verify_password(user['password_hash'], user['salt'], password):
-            # Successful login
-            clear_failed_attempts(username)
-            
-            # Update session
-            st.session_state.authenticated = True
-            st.session_state.user_id = user['user_id']
-            st.session_state.username = user['username']
-            st.session_state.organization = user['organization']
-            st.session_state.role = user['role']
-            st.session_state.demo_mode = False
-            
             # Update last login
-            with db_session() as conn:
-                with conn.cursor() as cur:
-                    cur.execute(
-                        "UPDATE users SET last_login = NOW() WHERE user_id = %s",
-                        (user['user_id'],)
-                    )
-            
-            # Log activity
-            log_activity(
-                user_id=user['user_id'],
-                action="login",
-                details=f"User logged in"
+            execute_query(
+                "UPDATE users SET last_login = NOW() WHERE user_id = %s",
+                (user['user_id'],)
             )
             
-            return {"success": True, "message": "Login successful"}
+            log_activity(
+                user_id=user['user_id'],
+                action="user_login",
+                details=f"User logged in: {username}"
+            )
+            
+            return {
+                "success": True,
+                "message": "Login successful",
+                "user": {
+                    'id': user['user_id'],
+                    'username': user['username'],
+                    'organization': user['organization'],
+                    'role': user['role']
+                }
+            }
         else:
-            record_failed_attempt(username)
             return {"success": False, "message": "Invalid credentials"}
             
     except Exception as e:
-        return {"success": False, "message": f"Login error: {str(e)}"}
+        return {"success": False, "message": f"Authentication error: {str(e)}"}
 
-def logout():
-    """Log out current user"""
-    if st.session_state.authenticated:
-        log_activity(
-            user_id=st.session_state.user_id,
-            action="logout",
-            details="User logged out"
-        )
-    
-    # Preserve settings
-    settings = {
-        'timezone': st.session_state.get('timezone', 'UTC'),
-        'currency': st.session_state.get('currency', 'USD'),
-        'prevent_negative_stock': st.session_state.get('prevent_negative_stock', True)
-    }
-    
-    # Clear session
-    st.session_state.clear()
-    
-    # Restore settings
-    for key, value in settings.items():
-        st.session_state[key] = value
-    
-    st.session_state.authenticated = False
-    st.session_state.demo_mode = True
-    st.rerun()
-
-# ---------------------------
-# Security: Lockout Management
-# ---------------------------
-MAX_ATTEMPTS = 5
-LOCKOUT_MINUTES = 15
-
-def record_failed_attempt(username: str):
-    """Record failed login attempt"""
-    attempts = st.session_state.login_attempts.get(username, {'count': 0, 'timestamp': None})
-    attempts['count'] += 1
-    attempts['timestamp'] = datetime.now()
-    st.session_state.login_attempts[username] = attempts
-
-def clear_failed_attempts(username: str):
-    """Clear failed attempts for user"""
-    if username in st.session_state.login_attempts:
-        del st.session_state.login_attempts[username]
-
-def check_lockout(username: str) -> Optional[int]:
-    """Check if user is locked out"""
-    attempts = st.session_state.login_attempts.get(username)
-    if not attempts:
-        return None
-    
-    if attempts['count'] >= MAX_ATTEMPTS:
-        lockout_end = attempts['timestamp'] + timedelta(minutes=LOCKOUT_MINUTES)
-        if datetime.now() < lockout_end:
-            remaining = (lockout_end - datetime.now()).seconds // 60
-            return remaining
-        else:
-            clear_failed_attempts(username)
-    
-    return None
-
-# ---------------------------
-# Activity Logging
-# ---------------------------
 def log_activity(user_id: Optional[str] = None, action: str = "", details: str = ""):
     """Log user activity"""
     try:
-        run_query(
+        execute_query(
             """
-            INSERT INTO inventory_logs (organization, user_id, action, details)
+            INSERT INTO activity_logs (organization, user_id, action, details)
             VALUES (%s, %s, %s, %s)
             """,
             (
@@ -766,20 +554,71 @@ def log_activity(user_id: Optional[str] = None, action: str = "", details: str =
                 details
             )
         )
-    except Exception as e:
-        print(f"Logging error: {str(e)}")
-        pass  # Silently fail logging
+    except:
+        pass  # Silently fail if logging fails
 
-# ---------------------------
-# Data Management Functions
-# ---------------------------
-def get_current_org():
+# ============================================================================
+# SESSION MANAGEMENT
+# ============================================================================
+def initialize_session():
+    """Initialize session state"""
+    if 'authenticated' not in st.session_state:
+        st.session_state.authenticated = False
+        st.session_state.user_id = None
+        st.session_state.username = None
+        st.session_state.organization = None
+        st.session_state.role = None
+        st.session_state.currency = config.APP_CONFIG['default_currency']
+        st.session_state.timezone = config.APP_CONFIG['default_timezone']
+        st.session_state.page = "Dashboard"
+        st.session_state.login_attempts = {}
+
+initialize_session()
+
+def login_user(user_data: dict):
+    """Login user and update session"""
+    st.session_state.authenticated = True
+    st.session_state.user_id = user_data['id']
+    st.session_state.username = user_data['username']
+    st.session_state.organization = user_data['organization']
+    st.session_state.role = user_data['role']
+    st.session_state.demo_mode = False
+    st.rerun()
+
+def logout_user():
+    """Logout user and clear session"""
+    if st.session_state.authenticated:
+        log_activity(
+            user_id=st.session_state.user_id,
+            action="user_logout",
+            details="User logged out"
+        )
+    
+    # Clear session but keep preferences
+    currency = st.session_state.get('currency', 'USD')
+    timezone = st.session_state.get('timezone', 'UTC')
+    
+    keys = list(st.session_state.keys())
+    for key in keys:
+        del st.session_state[key]
+    
+    # Restore preferences
+    st.session_state.currency = currency
+    st.session_state.timezone = timezone
+    st.session_state.authenticated = False
+    st.session_state.page = "Dashboard"
+    st.rerun()
+
+# ============================================================================
+# DATA MANAGEMENT
+# ============================================================================
+def get_current_organization():
     """Get current organization"""
     return st.session_state.organization if st.session_state.authenticated else None
 
-def get_products(page: int = 1, page_size: int = 50, search: str = None):
-    """Get paginated products"""
-    org = get_current_org()
+def get_products(search: str = "", page: int = 1, page_size: int = 50):
+    """Get products for current organization"""
+    org = get_current_organization()
     if not org:
         return pd.DataFrame()
     
@@ -787,156 +626,65 @@ def get_products(page: int = 1, page_size: int = 50, search: str = None):
     
     query = """
         SELECT 
-            p.product_id,
-            p.sku,
-            p.name,
-            p.description,
-            p.unit,
-            p.cost_price,
-            p.sell_price,
-            p.qty,
-            p.min_qty,
-            p.reorder_level,
-            p.location,
-            p.barcode,
-            p.is_active,
-            p.created_at,
-            p.updated_at,
-            CASE 
-                WHEN p.qty <= p.reorder_level THEN 'low'
-                WHEN p.qty <= p.min_qty THEN 'critical'
-                ELSE 'normal'
-            END as stock_status
-        FROM products p
-        WHERE p.organization = %s
+            product_id, sku, name, description, category, supplier,
+            unit, cost_price, sell_price, quantity, min_quantity,
+            reorder_level, location, barcode, notes, is_active,
+            created_at, updated_at
+        FROM products 
+        WHERE organization = %s
     """
     
     params = [org]
     
     if search:
-        query += " AND (p.sku ILIKE %s OR p.name ILIKE %s OR p.description ILIKE %s)"
+        query += " AND (sku ILIKE %s OR name ILIKE %s OR description ILIKE %s)"
         params.extend([f"%{search}%"] * 3)
     
-    query += " ORDER BY p.updated_at DESC LIMIT %s OFFSET %s"
+    query += " ORDER BY updated_at DESC LIMIT %s OFFSET %s"
     params.extend([page_size, offset])
     
-    return fetch_df(query, tuple(params))
+    return fetch_dataframe(query, tuple(params))
 
-def get_kpis():
-    """Calculate key performance indicators"""
-    org = get_current_org()
-    if not org:
-        return {}
-    
-    try:
-        # Total SKUs
-        total_skus_df = fetch_df(
-            "SELECT COUNT(*) as count FROM products WHERE organization = %s",
-            (org,)
-        )
-        total_skus = total_skus_df.iloc[0]['count'] if not total_skus_df.empty else 0
-        
-        # Stock value
-        stock_value_df = fetch_df(
-            "SELECT SUM(qty * cost_price) as value FROM products WHERE organization = %s",
-            (org,)
-        )
-        stock_value = stock_value_df.iloc[0]['value'] if not stock_value_df.empty and stock_value_df.iloc[0]['value'] else 0
-        
-        # Low stock items
-        low_stock_df = fetch_df(
-            """
-            SELECT COUNT(*) as count 
-            FROM products 
-            WHERE organization = %s AND qty <= reorder_level
-            """,
-            (org,)
-        )
-        low_stock = low_stock_df.iloc[0]['count'] if not low_stock_df.empty else 0
-        
-        # Monthly sales
-        monthly_sales_df = fetch_df(
-            """
-            SELECT COALESCE(SUM(total_amount), 0) as sales
-            FROM transactions 
-            WHERE organization = %s 
-                AND type = 'sale' 
-                AND created_at >= NOW() - INTERVAL '30 days'
-            """,
-            (org,)
-        )
-        monthly_sales = monthly_sales_df.iloc[0]['sales'] if not monthly_sales_df.empty else 0
-        
-        # Recent transactions
-        recent_tx_df = fetch_df(
-            """
-            SELECT COUNT(*) as count
-            FROM transactions 
-            WHERE organization = %s 
-                AND created_at >= NOW() - INTERVAL '7 days'
-            """,
-            (org,)
-        )
-        recent_tx = recent_tx_df.iloc[0]['count'] if not recent_tx_df.empty else 0
-        
-        return {
-            'total_skus': total_skus,
-            'stock_value': f"{st.session_state.currency} {stock_value:,.2f}",
-            'low_stock': low_stock,
-            'monthly_sales': f"{st.session_state.currency} {monthly_sales:,.2f}",
-            'recent_transactions': recent_tx
-        }
-    except Exception as e:
-        print(f"KPI calculation error: {str(e)}")
-        return {}
-
-def demo_products_df():
-    """Generate demo products for demo mode"""
-    data = {
-        'product_id': [1, 2, 3],
-        'sku': ['SKU-001', 'SKU-002', 'SKU-101'],
-        'name': ['Bottled Water 500ml', 'Bottled Water 1.5L', 'Rice 5kg'],
-        'description': ['Pure drinking water', 'Large bottle water', 'Premium quality rice'],
-        'unit': ['pcs', 'pcs', 'pcs'],
-        'cost_price': [1.5, 3.0, 60.0],
-        'sell_price': [2.5, 5.0, 85.0],
-        'qty': [120, 80, 40],
-        'min_qty': [10, 10, 5],
-        'reorder_level': [30, 20, 10],
-        'location': ['Shelf A1', 'Shelf A2', 'Shelf B1'],
-        'barcode': ['123456789', '987654321', '456789123'],
-        'stock_status': ['normal', 'normal', 'low'],
-        'created_at': [datetime.now() - timedelta(days=30), 
-                      datetime.now() - timedelta(days=25), 
-                      datetime.now() - timedelta(days=20)]
-    }
-    return pd.DataFrame(data)
-
-def add_product(sku: str, name: str, description: str, unit: str, 
-                cost_price: float, sell_price: float, qty: int, 
-                min_qty: int, reorder_level: int, location: str, 
-                barcode: str = None):
-    """Add a new product"""
-    org = get_current_org()
+def add_product(product_data: dict):
+    """Add new product"""
+    org = get_current_organization()
     if not org:
         return {"success": False, "message": "Not authenticated"}
     
     try:
-        run_query(
+        execute_query(
             """
-            INSERT INTO products (organization, sku, name, description, unit, 
-                                 cost_price, sell_price, qty, min_qty, reorder_level, 
-                                 location, barcode)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            INSERT INTO products (
+                organization, sku, name, description, category, supplier,
+                unit, cost_price, sell_price, quantity, min_quantity,
+                reorder_level, location, barcode, notes
+            ) VALUES (
+                %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s
+            )
             """,
-            (org, sku, name, description, unit, cost_price, sell_price, 
-             qty, min_qty, reorder_level, location, barcode)
+            (
+                org,
+                product_data['sku'],
+                product_data['name'],
+                product_data['description'],
+                product_data['category'],
+                product_data['supplier'],
+                product_data['unit'],
+                product_data['cost_price'],
+                product_data['sell_price'],
+                product_data['quantity'],
+                product_data['min_quantity'],
+                product_data['reorder_level'],
+                product_data['location'],
+                product_data['barcode'],
+                product_data['notes']
+            )
         )
         
         log_activity(
             user_id=st.session_state.user_id,
-            action="add_product",
-            details=f"Added product: {name} ({sku})"
+            action="product_added",
+            details=f"Added product: {product_data['name']} ({product_data['sku']})"
         )
         
         return {"success": True, "message": "Product added successfully"}
@@ -944,340 +692,307 @@ def add_product(sku: str, name: str, description: str, unit: str,
     except psycopg2.IntegrityError:
         return {"success": False, "message": "SKU already exists"}
     except Exception as e:
-        return {"success": False, "message": f"Error adding product: {str(e)}"}
+        return {"success": False, "message": f"Error: {str(e)}"}
 
-# ---------------------------
-# UI Components
-# ---------------------------
-def render_login_form():
-    """Render login form"""
-    with st.form("login_form", clear_on_submit=True):
-        st.subheader("Login")
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submit = st.form_submit_button("Login", use_container_width=True)
+def get_key_metrics():
+    """Calculate key performance indicators"""
+    org = get_current_organization()
+    if not org:
+        return {}
+    
+    try:
+        # Total products
+        total_df = fetch_dataframe(
+            "SELECT COUNT(*) as count FROM products WHERE organization = %s",
+            (org,)
+        )
+        total_products = total_df.iloc[0]['count'] if not total_df.empty else 0
         
-        if submit:
-            result = login(username, password)
-            if result['success']:
-                st.success(result['message'])
-                st.rerun()
-            else:
-                st.error(result['message'])
+        # Stock value
+        value_df = fetch_dataframe(
+            "SELECT SUM(quantity * cost_price) as value FROM products WHERE organization = %s",
+            (org,)
+        )
+        stock_value = value_df.iloc[0]['value'] if not value_df.empty else 0
+        
+        # Low stock items
+        low_df = fetch_dataframe(
+            """
+            SELECT COUNT(*) as count 
+            FROM products 
+            WHERE organization = %s AND quantity <= reorder_level
+            """,
+            (org,)
+        )
+        low_stock = low_df.iloc[0]['count'] if not low_df.empty else 0
+        
+        # Out of stock items
+        out_df = fetch_dataframe(
+            "SELECT COUNT(*) as count FROM products WHERE organization = %s AND quantity = 0",
+            (org,)
+        )
+        out_of_stock = out_df.iloc[0]['count'] if not out_df.empty else 0
+        
+        return {
+            'total_products': total_products,
+            'stock_value': f"{st.session_state.currency} {stock_value:,.2f}",
+            'low_stock': low_stock,
+            'out_of_stock': out_of_stock
+        }
+    except:
+        return {}
 
-def render_signup_form():
-    """Render signup form"""
-    with st.form("signup_form", clear_on_submit=True):
-        st.subheader("Create Account")
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            username = st.text_input("Username")
-        with col2:
-            email = st.text_input("Email")
-        
-        organization = st.text_input("Organization Name")
-        
-        col3, col4 = st.columns(2)
-        with col3:
-            password = st.text_input("Password", type="password")
-        with col4:
-            confirm_password = st.text_input("Confirm Password", type="password")
-        
-        submit = st.form_submit_button("Create Account", use_container_width=True)
-        
-        if submit:
-            if password != confirm_password:
-                st.error("Passwords do not match")
-            else:
-                result = signup(username, email, password, organization)
-                if result['success']:
-                    st.success(result['message'])
-                    st.rerun()
-                else:
-                    st.error(result['message'])
-
+# ============================================================================
+# UI COMPONENTS
+# ============================================================================
 def render_sidebar():
     """Render sidebar navigation"""
     with st.sidebar:
-        st.markdown("### InvyPro Inventory")
+        st.markdown("## InvyPro")
+        st.markdown("---")
         
         if not st.session_state.authenticated:
-            tab1, tab2 = st.tabs(["Login", "Sign Up"])
-            with tab1:
-                render_login_form()
-            with tab2:
-                render_signup_form()
+            # Login/Signup Forms
+            tab_login, tab_signup = st.tabs(["Login", "Sign Up"])
             
-            st.divider()
+            with tab_login:
+                st.subheader("Login")
+                login_username = st.text_input("Username", key="login_username")
+                login_password = st.text_input("Password", type="password", key="login_password")
+                
+                if st.button("Login", type="primary", use_container_width=True):
+                    result = authenticate_user(login_username, login_password)
+                    if result['success']:
+                        login_user(result['user'])
+                        st.success(result['message'])
+                    else:
+                        st.error(result['message'])
             
-            # Features
+            with tab_signup:
+                st.subheader("Create Account")
+                signup_username = st.text_input("Choose Username", key="signup_username")
+                signup_email = st.text_input("Email (Optional)", key="signup_email")
+                signup_org = st.text_input("Organization Name", key="signup_org")
+                signup_password = st.text_input("Password", type="password", key="signup_password")
+                signup_confirm = st.text_input("Confirm Password", type="password", key="signup_confirm")
+                
+                if st.button("Create Account", use_container_width=True):
+                    if signup_password != signup_confirm:
+                        st.error("Passwords do not match")
+                    else:
+                        result = register_user(signup_username, signup_email, signup_password, signup_org)
+                        if result['success']:
+                            st.success(result['message'])
+                        else:
+                            st.error(result['message'])
+            
+            st.markdown("---")
             st.markdown("### Features")
-            features = [
-                "Multi-user Management",
-                "Real-time Inventory Tracking",
-                "Sales & Purchase Orders",
-                "Supplier Management",
-                "Low Stock Alerts",
-                "Barcode Support",
-                "Advanced Reporting",
-                "Data Export/Import"
-            ]
-            
-            for feature in features:
-                st.markdown(f"• {feature}")
-            
-            st.divider()
-            st.caption("v2.0.0 | PostgreSQL Edition")
+            st.markdown("• Multi-organization support")
+            st.markdown("• Real-time inventory tracking")
+            st.markdown("• Sales & purchase management")
+            st.markdown("• Supplier management")
+            st.markdown("• Advanced reporting")
             
         else:
-            # User info
-            st.success(f"User: {st.session_state.username}")
+            # User Info
+            st.success(f"Welcome, {st.session_state.username}")
             st.caption(f"Organization: {st.session_state.organization}")
-            st.caption(f"Role: {st.session_state.role.title()}")
+            st.caption(f"Role: {st.session_state.role}")
             
             if st.button("Logout", use_container_width=True):
-                logout()
+                logout_user()
             
-            st.divider()
+            st.markdown("---")
             
             # Navigation
             pages = [
                 ("Dashboard", "Dashboard"),
                 ("Products", "Products"),
-                ("Sales", "Sales"),
-                ("Restock", "Restock"),
+                ("Transactions", "Transactions"),
                 ("Suppliers", "Suppliers"),
-                ("Categories", "Categories"),
                 ("Reports", "Reports"),
                 ("Settings", "Settings")
             ]
             
             for page_name, page_id in pages:
                 if st.button(
-                    f"{page_name}",
+                    page_name,
                     key=f"nav_{page_id}",
                     use_container_width=True,
-                    type="secondary" if st.session_state.page != page_id else "primary"
+                    type="primary" if st.session_state.page == page_id else "secondary"
                 ):
                     st.session_state.page = page_id
                     st.rerun()
 
-# ---------------------------
-# Page Rendering Functions
-# ---------------------------
 def render_dashboard():
     """Render dashboard page"""
     st.markdown("<h1 class='main-header'>Dashboard</h1>", unsafe_allow_html=True)
     
-    if st.session_state.demo_mode:
-        st.info("Please log in to access your organization's dashboard")
+    if not st.session_state.authenticated:
+        st.info("Please login to access your dashboard")
+        return
+    
+    # Key Metrics
+    metrics = get_key_metrics()
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <div class='metric-title'>Total Products</div>
+            <div class='metric-value'>{metrics.get('total_products', 0)}</div>
+            <div class='metric-trend'>Active inventory</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <div class='metric-title'>Stock Value</div>
+            <div class='metric-value'>{metrics.get('stock_value', '$0.00')}</div>
+            <div class='metric-trend'>Current value</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col3:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <div class='metric-title'>Low Stock</div>
+            <div class='metric-value'>{metrics.get('low_stock', 0)}</div>
+            <div class='metric-trend'>Need reordering</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col4:
+        st.markdown(f"""
+        <div class='metric-card'>
+            <div class='metric-title'>Out of Stock</div>
+            <div class='metric-value'>{metrics.get('out_of_stock', 0)}</div>
+            <div class='metric-trend'>Require attention</div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Quick Actions
+    st.markdown("<h2 class='section-header'>Quick Actions</h2>", unsafe_allow_html=True)
+    
+    col_actions1, col_actions2, col_actions3, col_actions4 = st.columns(4)
+    
+    with col_actions1:
+        if st.button("Add Product", use_container_width=True):
+            st.session_state.page = "Products"
+            st.rerun()
+    
+    with col_actions2:
+        if st.button("Record Sale", use_container_width=True):
+            st.session_state.page = "Transactions"
+            st.rerun()
+    
+    with col_actions3:
+        if st.button("Add Supplier", use_container_width=True):
+            st.session_state.page = "Suppliers"
+            st.rerun()
+    
+    with col_actions4:
+        if st.button("View Reports", use_container_width=True):
+            st.session_state.page = "Reports"
+            st.rerun()
+    
+    # Recent Products
+    st.markdown("<h2 class='section-header'>Recent Products</h2>", unsafe_allow_html=True)
+    
+    products = get_products(page_size=10)
+    if not products.empty:
+        display_df = products.copy()
         
-        # Demo dashboard
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.markdown("""
-                <div class='card'>
-                    <div class='card-title'>Total SKUs</div>
-                    <div class='card-value'>125</div>
-                    <div class='card-subtitle'>Across all categories</div>
-                </div>
-            """, unsafe_allow_html=True)
-        with col2:
-            st.markdown("""
-                <div class='card'>
-                    <div class='card-title'>Stock Value</div>
-                    <div class='card-value'>$45,230</div>
-                    <div class='card-subtitle'>Current inventory worth</div>
-                </div>
-            """, unsafe_allow_html=True)
-        with col3:
-            st.markdown("""
-                <div class='card'>
-                    <div class='card-title'>Low Stock</div>
-                    <div class='card-value'>8</div>
-                    <div class='card-subtitle'>Items need reordering</div>
-                </div>
-            """, unsafe_allow_html=True)
-        with col4:
-            st.markdown("""
-                <div class='card'>
-                    <div class='card-title'>Monthly Sales</div>
-                    <div class='card-value'>$12,450</div>
-                    <div class='card-subtitle'>Last 30 days</div>
-                </div>
-            """, unsafe_allow_html=True)
+        # Add status column
+        def get_status(row):
+            if row['quantity'] == 0:
+                return '<span class="status-badge status-out-of-stock">Out of Stock</span>'
+            elif row['quantity'] <= row['reorder_level']:
+                return '<span class="status-badge status-low-stock">Low Stock</span>'
+            else:
+                return '<span class="status-badge status-in-stock">In Stock</span>'
         
-        # Demo charts
-        st.subheader("Inventory Overview")
-        col1, col2 = st.columns(2)
+        display_df['status'] = display_df.apply(get_status, axis=1)
+        display_df['cost'] = display_df['cost_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
+        display_df['price'] = display_df['sell_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
         
-        with col1:
-            # Demo bar chart
-            chart_data = pd.DataFrame({
-                'Category': ['Electronics', 'Clothing', 'Food', 'Stationery'],
-                'Items': [45, 32, 28, 20]
-            })
-            chart = alt.Chart(chart_data).mark_bar().encode(
-                x='Category',
-                y='Items',
-                color=alt.Color('Category', legend=None)
-            ).properties(height=300)
-            st.altair_chart(chart, use_container_width=True)
-        
-        with col2:
-            # Demo line chart
-            dates = pd.date_range(start='2024-01-01', periods=30, freq='D')
-            sales_data = pd.DataFrame({
-                'Date': dates,
-                'Sales': [100 + i*30 + random.randint(-50, 50) for i in range(30)]
-            })
-            chart = alt.Chart(sales_data).mark_line(point=True).encode(
-                x='Date:T',
-                y='Sales:Q'
-            ).properties(height=300)
-            st.altair_chart(chart, use_container_width=True)
-        
+        st.markdown(display_df[['sku', 'name', 'category', 'quantity', 'cost', 'price', 'status']].to_html(
+            escape=False, index=False, classes='dataframe'
+        ), unsafe_allow_html=True)
     else:
-        # Real dashboard
-        kpis = get_kpis()
-        
-        col1, col2, col3, col4, col5 = st.columns(5)
-        
-        metrics = [
-            ("Total SKUs", kpis.get('total_skus', 0), "#2563eb"),
-            ("Stock Value", kpis.get('stock_value', '$0'), "#10b981"),
-            ("Low Stock", kpis.get('low_stock', 0), "#f59e0b"),
-            ("Monthly Sales", kpis.get('monthly_sales', '$0'), "#8b5cf6"),
-            ("Recent Tx", kpis.get('recent_transactions', 0), "#6366f1")
-        ]
-        
-        for (title, value, color), col in zip(metrics, [col1, col2, col3, col4, col5]):
-            with col:
-                st.markdown(f"""
-                    <div class='card'>
-                        <div class='card-title'>{title}</div>
-                        <div class='card-value' style='color: {color}'>{value}</div>
-                        <div class='card-subtitle'>Updated just now</div>
-                    </div>
-                """, unsafe_allow_html=True)
-        
-        # Quick actions
-        st.subheader("Quick Actions")
-        qcol1, qcol2, qcol3, qcol4 = st.columns(4)
-        
-        with qcol1:
-            if st.button("Add Product", use_container_width=True):
-                st.session_state.page = "Products"
-                st.rerun()
-        
-        with qcol2:
-            if st.button("New Sale", use_container_width=True):
-                st.session_state.page = "Sales"
-                st.rerun()
-        
-        with qcol3:
-            if st.button("Restock", use_container_width=True):
-                st.session_state.page = "Restock"
-                st.rerun()
-        
-        with qcol4:
-            if st.button("View Reports", use_container_width=True):
-                st.session_state.page = "Reports"
-                st.rerun()
-        
-        # Recent products
-        st.subheader("Recent Products")
-        products = get_products(page_size=10)
-        if not products.empty:
-            st.dataframe(
-                products[['sku', 'name', 'unit', 'qty', 'stock_status']],
-                use_container_width=True,
-                column_config={
-                    'stock_status': st.column_config.TextColumn(
-                        "Status",
-                        help="Stock status indicator"
-                    )
-                }
-            )
-        else:
-            st.info("No products found. Add your first product!")
-        
-        # Recent transactions
-        st.subheader("Recent Transactions")
-        org = get_current_org()
-        if org:
-            try:
-                transactions = fetch_df("""
-                    SELECT 
-                        t.reference,
-                        p.name as product,
-                        t.type,
-                        t.quantity,
-                        t.total_amount,
-                        t.created_at
-                    FROM transactions t
-                    JOIN products p ON t.product_id = p.product_id
-                    WHERE t.organization = %s
-                    ORDER BY t.created_at DESC
-                    LIMIT 10
-                """, (org,))
-                
-                if not transactions.empty:
-                    st.dataframe(transactions, use_container_width=True)
-                else:
-                    st.info("No transactions yet")
-            except:
-                st.info("No transactions yet")
+        st.info("No products found. Add your first product using the 'Add Product' button above.")
 
 def render_products():
     """Render products management page"""
     st.markdown("<h1 class='main-header'>Products</h1>", unsafe_allow_html=True)
     
-    if st.session_state.demo_mode:
-        st.warning("Please log in to manage products")
-        # Show demo products
-        products = demo_products_df()
-        if not products.empty:
-            st.dataframe(products, use_container_width=True)
+    if not st.session_state.authenticated:
+        st.warning("Please login to manage products")
         return
     
-    # Product management tabs
-    tab1, tab2, tab3 = st.tabs(["Browse Products", "Add Product", "Import/Export"])
+    # Tabs for product management
+    tab1, tab2 = st.tabs(["Product List", "Add Product"])
     
     with tab1:
         # Search and filters
-        col1, col2, col3 = st.columns(3)
-        with col1:
+        col_search, col_filter, col_page = st.columns(3)
+        
+        with col_search:
             search_term = st.text_input("Search products", placeholder="SKU, name, description...")
-        with col2:
-            stock_filter = st.selectbox("Stock Status", ["All", "In Stock", "Low Stock", "Out of Stock"])
-        with col3:
+        
+        with col_filter:
+            stock_filter = st.selectbox(
+                "Stock Status",
+                ["All", "In Stock", "Low Stock", "Out of Stock"]
+            )
+        
+        with col_page:
             page_size = st.selectbox("Items per page", [10, 25, 50, 100], index=1)
         
-        page = st.number_input("Page", min_value=1, value=1, step=1)
+        page_number = st.number_input("Page", min_value=1, value=1, step=1)
         
         # Get products
-        products = get_products(page=page, page_size=page_size, search=search_term)
+        products = get_products(search=search_term, page=page_number, page_size=page_size)
         
         if not products.empty:
             # Apply stock filter
             if stock_filter == "Low Stock":
-                products = products[products['stock_status'] == 'low']
+                products = products[products['quantity'] <= products['reorder_level']]
             elif stock_filter == "Out of Stock":
-                products = products[products['qty'] <= 0]
+                products = products[products['quantity'] == 0]
+            elif stock_filter == "In Stock":
+                products = products[products['quantity'] > 0]
             
             # Display products
-            display_df = products.copy()
-            display_df['cost_price'] = display_df['cost_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
-            display_df['sell_price'] = display_df['sell_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
-            
             st.dataframe(
-                display_df[['sku', 'name', 'description', 'unit', 'cost_price', 'sell_price', 'qty', 'stock_status', 'location']],
+                products[['sku', 'name', 'category', 'quantity', 'cost_price', 'sell_price', 'location']],
                 use_container_width=True,
-                hide_index=True
+                column_config={
+                    "cost_price": st.column_config.NumberColumn(
+                        "Cost",
+                        format=f"{st.session_state.currency} %.2f"
+                    ),
+                    "sell_price": st.column_config.NumberColumn(
+                        "Price",
+                        format=f"{st.session_state.currency} %.2f"
+                    )
+                }
             )
             
+            # Export option
+            if st.button("Export to CSV"):
+                csv = products.to_csv(index=False)
+                st.download_button(
+                    label="Download CSV",
+                    data=csv,
+                    file_name="products_export.csv",
+                    mime="text/csv"
+                )
         else:
             st.info("No products found")
     
@@ -1287,29 +1002,59 @@ def render_products():
             st.subheader("Add New Product")
             
             col1, col2 = st.columns(2)
+            
             with col1:
-                sku = st.text_input("SKU *", help="Unique stock keeping unit")
+                sku = st.text_input("SKU *", help="Unique product identifier")
                 name = st.text_input("Product Name *")
                 description = st.text_area("Description")
+                category = st.text_input("Category")
+                supplier = st.text_input("Supplier")
             
             with col2:
-                unit = st.selectbox("Unit", ["pcs", "kg", "liters", "meters", "boxes", "units"])
-                location = st.text_input("Storage Location", placeholder="Shelf A1")
-                barcode = st.text_input("Barcode (optional)")
+                unit = st.selectbox("Unit", ["pcs", "kg", "liters", "boxes", "meters", "units"])
+                location = st.text_input("Location", placeholder="Shelf A1")
+                barcode = st.text_input("Barcode (Optional)")
+                notes = st.text_area("Notes")
             
             col3, col4, col5 = st.columns(3)
+            
             with col3:
-                cost_price = st.number_input("Cost Price", min_value=0.0, value=0.0, step=0.01, 
-                                           format="%.2f")
-                qty = st.number_input("Initial Quantity", min_value=0, value=0, step=1)
+                cost_price = st.number_input(
+                    "Cost Price",
+                    min_value=0.0,
+                    value=0.0,
+                    step=0.01,
+                    format="%.2f"
+                )
+                quantity = st.number_input(
+                    "Quantity",
+                    min_value=0,
+                    value=0,
+                    step=1
+                )
             
             with col4:
-                sell_price = st.number_input("Selling Price", min_value=0.0, value=0.0, step=0.01,
-                                           format="%.2f")
-                reorder_level = st.number_input("Reorder Level", min_value=0, value=10, step=1)
+                sell_price = st.number_input(
+                    "Selling Price",
+                    min_value=0.0,
+                    value=0.0,
+                    step=0.01,
+                    format="%.2f"
+                )
+                min_quantity = st.number_input(
+                    "Minimum Quantity",
+                    min_value=0,
+                    value=5,
+                    step=1
+                )
             
             with col5:
-                min_qty = st.number_input("Minimum Quantity", min_value=0, value=5, step=1)
+                reorder_level = st.number_input(
+                    "Reorder Level",
+                    min_value=0,
+                    value=10,
+                    step=1
+                )
             
             submitted = st.form_submit_button("Save Product", use_container_width=True)
             
@@ -1317,95 +1062,139 @@ def render_products():
                 if not sku or not name:
                     st.error("SKU and Product Name are required")
                 else:
-                    result = add_product(sku, name, description, unit, cost_price, 
-                                       sell_price, qty, min_qty, reorder_level, 
-                                       location, barcode)
+                    product_data = {
+                        'sku': sku,
+                        'name': name,
+                        'description': description,
+                        'category': category,
+                        'supplier': supplier,
+                        'unit': unit,
+                        'cost_price': cost_price,
+                        'sell_price': sell_price,
+                        'quantity': quantity,
+                        'min_quantity': min_quantity,
+                        'reorder_level': reorder_level,
+                        'location': location,
+                        'barcode': barcode,
+                        'notes': notes
+                    }
+                    
+                    result = add_product(product_data)
                     if result['success']:
                         st.success(result['message'])
                         st.rerun()
                     else:
                         st.error(result['message'])
-    
-    with tab3:
-        # Import/Export section
-        st.subheader("Bulk Operations")
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            st.markdown("### Export Products")
-            
-            if st.button("Export All Products", use_container_width=True):
-                products = get_products(page_size=1000)
-                if not products.empty:
-                    csv = products.to_csv(index=False)
-                    st.download_button(
-                        label="Download CSV",
-                        data=csv,
-                        file_name="products_export.csv",
-                        mime="text/csv",
-                        key="export_products"
-                    )
-                else:
-                    st.info("No products to export")
-        
-        with col2:
-            st.markdown("### Import Products")
-            st.info("Import functionality coming soon")
 
-def render_sales():
-    """Render sales page"""
-    st.markdown("<h1 class='main-header'>Sales</h1>", unsafe_allow_html=True)
+def render_transactions():
+    """Render transactions page"""
+    st.markdown("<h1 class='main-header'>Transactions</h1>", unsafe_allow_html=True)
     
-    if st.session_state.demo_mode:
-        st.warning("Please log in to record sales")
+    if not st.session_state.authenticated:
+        st.warning("Please login to view transactions")
         return
     
-    st.info("Sales recording functionality coming soon")
-
-def render_restock():
-    """Render restock page"""
-    st.markdown("<h1 class='main-header'>Restock</h1>", unsafe_allow_html=True)
-    
-    if st.session_state.demo_mode:
-        st.warning("Please log in to manage restocks")
-        return
-    
-    st.info("Restock management functionality coming soon")
+    st.info("Transaction recording functionality coming soon")
 
 def render_suppliers():
     """Render suppliers page"""
     st.markdown("<h1 class='main-header'>Suppliers</h1>", unsafe_allow_html=True)
     
-    if st.session_state.demo_mode:
-        st.warning("Please log in to manage suppliers")
+    if not st.session_state.authenticated:
+        st.warning("Please login to manage suppliers")
         return
     
     st.info("Supplier management functionality coming soon")
-
-def render_categories():
-    """Render categories page"""
-    st.markdown("<h1 class='main-header'>Categories</h1>", unsafe_allow_html=True)
-    
-    if st.session_state.demo_mode:
-        st.warning("Please log in to manage categories")
-        return
-    
-    st.info("Category management functionality coming soon")
 
 def render_reports():
     """Render reports page"""
     st.markdown("<h1 class='main-header'>Reports</h1>", unsafe_allow_html=True)
     
-    if st.session_state.demo_mode:
-        st.warning("Please log in to view reports")
+    if not st.session_state.authenticated:
+        st.warning("Please login to view reports")
         return
     
     st.info("Reporting functionality coming soon")
 
-# ---------------------------
-# Main App
-# ---------------------------
+def render_settings():
+    """Render settings page"""
+    st.markdown("<h1 class='main-header'>Settings</h1>", unsafe_allow_html=True)
+    
+    if not st.session_state.authenticated:
+        st.warning("Please login to access settings")
+        return
+    
+    # Organization Settings
+    with st.expander("Organization Settings", expanded=True):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            currency = st.selectbox(
+                "Default Currency",
+                ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"],
+                index=["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"].index(
+                    st.session_state.currency if st.session_state.currency in 
+                    ["USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"] 
+                    else "USD"
+                ),
+                key="currency_select"
+            )
+            st.session_state.currency = currency
+        
+        with col2:
+            timezone = st.selectbox(
+                "Time Zone",
+                pytz.common_timezones,
+                index=pytz.common_timezones.index(
+                    st.session_state.timezone if st.session_state.timezone in pytz.common_timezones 
+                    else "UTC"
+                ),
+                key="timezone_select"
+            )
+            st.session_state.timezone = timezone
+    
+    # User Settings
+    with st.expander("User Settings"):
+        st.write("Change Password")
+        current_pass = st.text_input("Current Password", type="password")
+        new_pass = st.text_input("New Password", type="password")
+        confirm_pass = st.text_input("Confirm New Password", type="password")
+        
+        if st.button("Update Password"):
+            if new_pass != confirm_pass:
+                st.error("New passwords do not match")
+            elif len(new_pass) < 8:
+                st.error("Password must be at least 8 characters")
+            else:
+                st.success("Password updated successfully")
+    
+    # System Settings
+    with st.expander("System Settings"):
+        col_sys1, col_sys2 = st.columns(2)
+        
+        with col_sys1:
+            prevent_negative = st.checkbox("Prevent Negative Stock", value=True)
+            auto_backup = st.checkbox("Automatic Backups", value=False)
+        
+        with col_sys2:
+            email_alerts = st.checkbox("Email Alerts", value=False)
+            low_stock_notify = st.checkbox("Low Stock Notifications", value=True)
+    
+    # Danger Zone
+    with st.expander("Danger Zone", expanded=False):
+        st.warning("These actions cannot be undone. Proceed with caution.")
+        
+        if st.button("Export All Data", type="secondary"):
+            st.info("Data export functionality coming soon")
+        
+        if st.button("Reset Organization Data", type="secondary"):
+            confirm = st.checkbox("I understand this will delete all products and transactions")
+            if confirm and st.button("CONFIRM RESET", type="primary"):
+                st.error("Data reset functionality coming soon")
+
+# ============================================================================
+# MAIN APPLICATION
+# ============================================================================
 def main():
     """Main application function"""
     
@@ -1413,76 +1202,32 @@ def main():
     if 'db_initialized' not in st.session_state:
         try:
             if Database.test_connection():
-                init_database()
+                initialize_database()
                 st.session_state.db_initialized = True
             else:
-                st.warning("Database connection failed. Running in demo mode.")
-                st.session_state.demo_mode = True
+                st.warning("Running in demo mode. Database connection required for full functionality.")
         except Exception as e:
-            st.warning(f"Database initialization error: {str(e)}. Running in demo mode.")
-            st.session_state.demo_mode = True
+            st.warning(f"Database setup: {str(e)}")
     
     # Render sidebar
     render_sidebar()
     
-    # Main content based on current page
-    if st.session_state.page == "Dashboard":
-        render_dashboard()
-    elif st.session_state.page == "Products":
-        render_products()
-    elif st.session_state.page == "Sales":
-        render_sales()
-    elif st.session_state.page == "Restock":
-        render_restock()
-    elif st.session_state.page == "Suppliers":
-        render_suppliers()
-    elif st.session_state.page == "Categories":
-        render_categories()
-    elif st.session_state.page == "Reports":
-        render_reports()
-    elif st.session_state.page == "Settings":
-        st.title("Settings")
-        
-        if st.session_state.authenticated:
-            # Organization settings
-            with st.expander("Organization Settings", expanded=True):
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.selectbox("Default Currency", ["USD", "EUR", "GBP", "GH₵"], 
-                               key="currency", index=0)
-                    st.selectbox("Time Zone", pytz.common_timezones, 
-                               key="timezone", index=pytz.common_timezones.index("UTC"))
-                
-                with col2:
-                    st.checkbox("Prevent Negative Stock", 
-                              key="prevent_negative_stock", value=True)
-                    st.checkbox("Low Stock Email Alerts", value=False)
-                    st.checkbox("Auto-backup Daily", value=False)
-            
-            # User settings
-            with st.expander("User Settings"):
-                new_password = st.text_input("New Password", type="password")
-                confirm_password = st.text_input("Confirm Password", type="password")
-                if st.button("Change Password") and new_password == confirm_password:
-                    st.success("Password updated!")
-            
-            # Danger zone
-            with st.expander("Danger Zone", expanded=False):
-                st.warning("These actions cannot be undone!")
-                
-                if st.button("Export All Data", type="secondary"):
-                    st.info("Export functionality coming soon")
-                
-                if st.button("Reset Organization Data", type="secondary"):
-                    if st.checkbox("I understand this will delete all data"):
-                        if st.button("CONFIRM RESET", type="primary"):
-                            st.error("Reset functionality coming soon")
-        else:
-            st.info("Please log in to access settings")
+    # Render main content based on current page
+    pages = {
+        "Dashboard": render_dashboard,
+        "Products": render_products,
+        "Transactions": render_transactions,
+        "Suppliers": render_suppliers,
+        "Reports": render_reports,
+        "Settings": render_settings
+    }
+    
+    page_func = pages.get(st.session_state.page, render_dashboard)
+    page_func()
 
-# ---------------------------
-# Run the app
-# ---------------------------
+# ============================================================================
+# APPLICATION ENTRY POINT
+# ============================================================================
 if __name__ == "__main__":
     # Create necessary directories
     import os
@@ -1490,4 +1235,5 @@ if __name__ == "__main__":
     os.makedirs("backups", exist_ok=True)
     os.makedirs("logs", exist_ok=True)
     
+    # Run the application
     main()
