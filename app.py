@@ -12,11 +12,14 @@ import secrets
 import hashlib
 import hmac
 import time
+import random
+import json
 import psycopg2
 from contextlib import contextmanager
 from datetime import datetime, timedelta
-from typing import Optional, Tuple, Dict, Any
+from typing import Optional, Tuple, Dict, Any, List
 from psycopg2.extras import RealDictCursor
+from urllib.parse import urlparse
 
 import pandas as pd
 import streamlit as st
@@ -457,9 +460,52 @@ def init_database():
                         if "already exists" not in str(e):
                             st.warning(f"Schema init warning: {str(e)}")
                         continue
+        # Create default admin user if no users exist
+        create_default_admin()
         st.success("Database initialized successfully")
     except Exception as e:
         st.error(f"Database initialization failed: {str(e)}")
+
+def create_default_admin():
+    """Create default admin user if no users exist"""
+    try:
+        # Check if any users exist
+        result = run_query("SELECT COUNT(*) as count FROM users;", fetch=True)
+        if result and result[0]['count'] == 0:
+            # Create default admin user
+            username = "admin"
+            password = "admin123"
+            organization = "Default Organization"
+            
+            salt = secrets.token_hex(32)
+            password_hash = hashlib.pbkdf2_hmac(
+                'sha256',
+                password.encode('utf-8'),
+                salt.encode('utf-8'),
+                100000
+            ).hex()
+            
+            run_query(
+                """
+                INSERT INTO users (username, password_hash, salt, organization, role, is_active)
+                VALUES (%s, %s, %s, %s, 'admin', TRUE)
+                """,
+                (username, password_hash, salt, organization)
+            )
+            
+            # Also create organization record
+            run_query(
+                """
+                INSERT INTO organizations (name, contact_email, is_active)
+                VALUES (%s, %s, TRUE)
+                ON CONFLICT (name) DO NOTHING
+                """,
+                (organization, "admin@example.com")
+            )
+            
+            print("Default admin user created: admin / admin123")
+    except Exception as e:
+        print(f"Warning: Could not create default admin: {str(e)}")
 
 # ---------------------------
 # Security Utilities
@@ -630,7 +676,7 @@ def login(username: str, password: str):
             log_activity(
                 user_id=user['user_id'],
                 action="login",
-                details=f"User logged in from IP"
+                details=f"User logged in"
             )
             
             return {"success": True, "message": "Login successful"}
@@ -708,21 +754,20 @@ def check_lockout(username: str) -> Optional[int]:
 def log_activity(user_id: Optional[str] = None, action: str = "", details: str = ""):
     """Log user activity"""
     try:
-        with db_session() as conn:
-            with conn.cursor() as cur:
-                cur.execute(
-                    """
-                    INSERT INTO inventory_logs (organization, user_id, action, details)
-                    VALUES (%s, %s, %s, %s)
-                    """,
-                    (
-                        st.session_state.get('organization', 'PUBLIC'),
-                        user_id,
-                        action,
-                        details
-                    )
-                )
-    except:
+        run_query(
+            """
+            INSERT INTO inventory_logs (organization, user_id, action, details)
+            VALUES (%s, %s, %s, %s)
+            """,
+            (
+                st.session_state.get('organization', 'PUBLIC'),
+                user_id,
+                action,
+                details
+            )
+        )
+    except Exception as e:
+        print(f"Logging error: {str(e)}")
         pass  # Silently fail logging
 
 # ---------------------------
@@ -746,8 +791,6 @@ def get_products(page: int = 1, page_size: int = 50, search: str = None):
             p.sku,
             p.name,
             p.description,
-            c.name as category,
-            s.name as supplier,
             p.unit,
             p.cost_price,
             p.sell_price,
@@ -765,8 +808,6 @@ def get_products(page: int = 1, page_size: int = 50, search: str = None):
                 ELSE 'normal'
             END as stock_status
         FROM products p
-        LEFT JOIN categories c ON p.category_id = c.category_id
-        LEFT JOIN suppliers s ON p.supplier_id = s.supplier_id
         WHERE p.organization = %s
     """
     
@@ -789,29 +830,32 @@ def get_kpis():
     
     try:
         # Total SKUs
-        total_skus = fetch_df(
+        total_skus_df = fetch_df(
             "SELECT COUNT(*) as count FROM products WHERE organization = %s",
             (org,)
-        ).iloc[0]['count']
+        )
+        total_skus = total_skus_df.iloc[0]['count'] if not total_skus_df.empty else 0
         
         # Stock value
-        stock_value = fetch_df(
+        stock_value_df = fetch_df(
             "SELECT SUM(qty * cost_price) as value FROM products WHERE organization = %s",
             (org,)
-        ).iloc[0]['value'] or 0
+        )
+        stock_value = stock_value_df.iloc[0]['value'] if not stock_value_df.empty and stock_value_df.iloc[0]['value'] else 0
         
         # Low stock items
-        low_stock = fetch_df(
+        low_stock_df = fetch_df(
             """
             SELECT COUNT(*) as count 
             FROM products 
             WHERE organization = %s AND qty <= reorder_level
             """,
             (org,)
-        ).iloc[0]['count']
+        )
+        low_stock = low_stock_df.iloc[0]['count'] if not low_stock_df.empty else 0
         
         # Monthly sales
-        monthly_sales = fetch_df(
+        monthly_sales_df = fetch_df(
             """
             SELECT COALESCE(SUM(total_amount), 0) as sales
             FROM transactions 
@@ -820,10 +864,11 @@ def get_kpis():
                 AND created_at >= NOW() - INTERVAL '30 days'
             """,
             (org,)
-        ).iloc[0]['sales']
+        )
+        monthly_sales = monthly_sales_df.iloc[0]['sales'] if not monthly_sales_df.empty else 0
         
         # Recent transactions
-        recent_tx = fetch_df(
+        recent_tx_df = fetch_df(
             """
             SELECT COUNT(*) as count
             FROM transactions 
@@ -831,7 +876,8 @@ def get_kpis():
                 AND created_at >= NOW() - INTERVAL '7 days'
             """,
             (org,)
-        ).iloc[0]['count']
+        )
+        recent_tx = recent_tx_df.iloc[0]['count'] if not recent_tx_df.empty else 0
         
         return {
             'total_skus': total_skus,
@@ -840,8 +886,65 @@ def get_kpis():
             'monthly_sales': f"{st.session_state.currency} {monthly_sales:,.2f}",
             'recent_transactions': recent_tx
         }
-    except:
+    except Exception as e:
+        print(f"KPI calculation error: {str(e)}")
         return {}
+
+def demo_products_df():
+    """Generate demo products for demo mode"""
+    data = {
+        'product_id': [1, 2, 3],
+        'sku': ['SKU-001', 'SKU-002', 'SKU-101'],
+        'name': ['Bottled Water 500ml', 'Bottled Water 1.5L', 'Rice 5kg'],
+        'description': ['Pure drinking water', 'Large bottle water', 'Premium quality rice'],
+        'unit': ['pcs', 'pcs', 'pcs'],
+        'cost_price': [1.5, 3.0, 60.0],
+        'sell_price': [2.5, 5.0, 85.0],
+        'qty': [120, 80, 40],
+        'min_qty': [10, 10, 5],
+        'reorder_level': [30, 20, 10],
+        'location': ['Shelf A1', 'Shelf A2', 'Shelf B1'],
+        'barcode': ['123456789', '987654321', '456789123'],
+        'stock_status': ['normal', 'normal', 'low'],
+        'created_at': [datetime.now() - timedelta(days=30), 
+                      datetime.now() - timedelta(days=25), 
+                      datetime.now() - timedelta(days=20)]
+    }
+    return pd.DataFrame(data)
+
+def add_product(sku: str, name: str, description: str, unit: str, 
+                cost_price: float, sell_price: float, qty: int, 
+                min_qty: int, reorder_level: int, location: str, 
+                barcode: str = None):
+    """Add a new product"""
+    org = get_current_org()
+    if not org:
+        return {"success": False, "message": "Not authenticated"}
+    
+    try:
+        run_query(
+            """
+            INSERT INTO products (organization, sku, name, description, unit, 
+                                 cost_price, sell_price, qty, min_qty, reorder_level, 
+                                 location, barcode)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (org, sku, name, description, unit, cost_price, sell_price, 
+             qty, min_qty, reorder_level, location, barcode)
+        )
+        
+        log_activity(
+            user_id=st.session_state.user_id,
+            action="add_product",
+            details=f"Added product: {name} ({sku})"
+        )
+        
+        return {"success": True, "message": "Product added successfully"}
+        
+    except psycopg2.IntegrityError:
+        return {"success": False, "message": "SKU already exists"}
+    except Exception as e:
+        return {"success": False, "message": f"Error adding product: {str(e)}"}
 
 # ---------------------------
 # UI Components
@@ -1088,7 +1191,7 @@ def render_dashboard():
         products = get_products(page_size=10)
         if not products.empty:
             st.dataframe(
-                products[['sku', 'name', 'category', 'qty', 'stock_status']],
+                products[['sku', 'name', 'unit', 'qty', 'stock_status']],
                 use_container_width=True,
                 column_config={
                     'stock_status': st.column_config.TextColumn(
@@ -1104,24 +1207,27 @@ def render_dashboard():
         st.subheader("Recent Transactions")
         org = get_current_org()
         if org:
-            transactions = fetch_df("""
-                SELECT 
-                    t.reference,
-                    p.name as product,
-                    t.type,
-                    t.quantity,
-                    t.total_amount,
-                    t.created_at
-                FROM transactions t
-                JOIN products p ON t.product_id = p.product_id
-                WHERE t.organization = %s
-                ORDER BY t.created_at DESC
-                LIMIT 10
-            """, (org,))
-            
-            if not transactions.empty:
-                st.dataframe(transactions, use_container_width=True)
-            else:
+            try:
+                transactions = fetch_df("""
+                    SELECT 
+                        t.reference,
+                        p.name as product,
+                        t.type,
+                        t.quantity,
+                        t.total_amount,
+                        t.created_at
+                    FROM transactions t
+                    JOIN products p ON t.product_id = p.product_id
+                    WHERE t.organization = %s
+                    ORDER BY t.created_at DESC
+                    LIMIT 10
+                """, (org,))
+                
+                if not transactions.empty:
+                    st.dataframe(transactions, use_container_width=True)
+                else:
+                    st.info("No transactions yet")
+            except:
                 st.info("No transactions yet")
 
 def render_products():
@@ -1130,6 +1236,10 @@ def render_products():
     
     if st.session_state.demo_mode:
         st.warning("Please log in to manage products")
+        # Show demo products
+        products = demo_products_df()
+        if not products.empty:
+            st.dataframe(products, use_container_width=True)
         return
     
     # Product management tabs
@@ -1141,53 +1251,33 @@ def render_products():
         with col1:
             search_term = st.text_input("Search products", placeholder="SKU, name, description...")
         with col2:
-            category_filter = st.selectbox("Category", ["All"] + ["Electronics", "Clothing", "Food", "Stationery"])
-        with col3:
             stock_filter = st.selectbox("Stock Status", ["All", "In Stock", "Low Stock", "Out of Stock"])
+        with col3:
+            page_size = st.selectbox("Items per page", [10, 25, 50, 100], index=1)
         
-        # Pagination
-        page_size = st.selectbox("Items per page", [10, 25, 50, 100], index=1)
         page = st.number_input("Page", min_value=1, value=1, step=1)
         
         # Get products
         products = get_products(page=page, page_size=page_size, search=search_term)
         
         if not products.empty:
+            # Apply stock filter
+            if stock_filter == "Low Stock":
+                products = products[products['stock_status'] == 'low']
+            elif stock_filter == "Out of Stock":
+                products = products[products['qty'] <= 0]
+            
             # Display products
+            display_df = products.copy()
+            display_df['cost_price'] = display_df['cost_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
+            display_df['sell_price'] = display_df['sell_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
+            
             st.dataframe(
-                products,
+                display_df[['sku', 'name', 'description', 'unit', 'cost_price', 'sell_price', 'qty', 'stock_status', 'location']],
                 use_container_width=True,
-                column_config={
-                    "cost_price": st.column_config.NumberColumn(
-                        "Cost",
-                        format=f"{st.session_state.currency} %.2f"
-                    ),
-                    "sell_price": st.column_config.NumberColumn(
-                        "Price",
-                        format=f"{st.session_state.currency} %.2f"
-                    ),
-                    "stock_status": st.column_config.SelectboxColumn(
-                        "Status",
-                        options=["low", "critical", "normal"]
-                    )
-                }
+                hide_index=True
             )
             
-            # Action buttons
-            selected = st.selectbox("Select product for actions", 
-                                  options=["-- select --"] + products['name'].tolist())
-            
-            if selected != "-- select --":
-                col1, col2, col3 = st.columns(3)
-                with col1:
-                    if st.button("Edit", use_container_width=True):
-                        st.info("Edit functionality coming soon")
-                with col2:
-                    if st.button("View History", use_container_width=True):
-                        st.info("History view coming soon")
-                with col3:
-                    if st.button("Delete", use_container_width=True, type="secondary"):
-                        st.warning("Delete functionality coming soon")
         else:
             st.info("No products found")
     
@@ -1203,9 +1293,9 @@ def render_products():
                 description = st.text_area("Description")
             
             with col2:
-                category = st.selectbox("Category", ["Electronics", "Clothing", "Food", "Stationery", "Other"])
-                supplier = st.selectbox("Supplier", ["Supplier A", "Supplier B", "Supplier C", "New Supplier..."])
-                unit = st.selectbox("Unit", ["pcs", "kg", "liters", "meters", "boxes"])
+                unit = st.selectbox("Unit", ["pcs", "kg", "liters", "meters", "boxes", "units"])
+                location = st.text_input("Storage Location", placeholder="Shelf A1")
+                barcode = st.text_input("Barcode (optional)")
             
             col3, col4, col5 = st.columns(3)
             with col3:
@@ -1220,9 +1310,6 @@ def render_products():
             
             with col5:
                 min_qty = st.number_input("Minimum Quantity", min_value=0, value=5, step=1)
-                location = st.text_input("Storage Location", placeholder="Shelf A1")
-            
-            barcode = st.text_input("Barcode (optional)")
             
             submitted = st.form_submit_button("Save Product", use_container_width=True)
             
@@ -1230,7 +1317,14 @@ def render_products():
                 if not sku or not name:
                     st.error("SKU and Product Name are required")
                 else:
-                    st.success(f"Product '{name}' added successfully!")
+                    result = add_product(sku, name, description, unit, cost_price, 
+                                       sell_price, qty, min_qty, reorder_level, 
+                                       location, barcode)
+                    if result['success']:
+                        st.success(result['message'])
+                        st.rerun()
+                    else:
+                        st.error(result['message'])
     
     with tab3:
         # Import/Export section
@@ -1240,12 +1334,6 @@ def render_products():
         
         with col1:
             st.markdown("### Export Products")
-            st.download_button(
-                label="Download CSV Template",
-                data="sku,name,description,category,cost_price,sell_price,qty,reorder_level\n",
-                file_name="products_template.csv",
-                mime="text/csv"
-            )
             
             if st.button("Export All Products", use_container_width=True):
                 products = get_products(page_size=1000)
@@ -1255,18 +1343,65 @@ def render_products():
                         label="Download CSV",
                         data=csv,
                         file_name="products_export.csv",
-                        mime="text/csv"
+                        mime="text/csv",
+                        key="export_products"
                     )
+                else:
+                    st.info("No products to export")
         
         with col2:
             st.markdown("### Import Products")
-            uploaded_file = st.file_uploader("Choose CSV file", type=['csv'])
-            if uploaded_file:
-                df = pd.read_csv(uploaded_file)
-                st.write("Preview:", df.head())
-                
-                if st.button("Import Data", use_container_width=True):
-                    st.info(f"Would import {len(df)} products")
+            st.info("Import functionality coming soon")
+
+def render_sales():
+    """Render sales page"""
+    st.markdown("<h1 class='main-header'>Sales</h1>", unsafe_allow_html=True)
+    
+    if st.session_state.demo_mode:
+        st.warning("Please log in to record sales")
+        return
+    
+    st.info("Sales recording functionality coming soon")
+
+def render_restock():
+    """Render restock page"""
+    st.markdown("<h1 class='main-header'>Restock</h1>", unsafe_allow_html=True)
+    
+    if st.session_state.demo_mode:
+        st.warning("Please log in to manage restocks")
+        return
+    
+    st.info("Restock management functionality coming soon")
+
+def render_suppliers():
+    """Render suppliers page"""
+    st.markdown("<h1 class='main-header'>Suppliers</h1>", unsafe_allow_html=True)
+    
+    if st.session_state.demo_mode:
+        st.warning("Please log in to manage suppliers")
+        return
+    
+    st.info("Supplier management functionality coming soon")
+
+def render_categories():
+    """Render categories page"""
+    st.markdown("<h1 class='main-header'>Categories</h1>", unsafe_allow_html=True)
+    
+    if st.session_state.demo_mode:
+        st.warning("Please log in to manage categories")
+        return
+    
+    st.info("Category management functionality coming soon")
+
+def render_reports():
+    """Render reports page"""
+    st.markdown("<h1 class='main-header'>Reports</h1>", unsafe_allow_html=True)
+    
+    if st.session_state.demo_mode:
+        st.warning("Please log in to view reports")
+        return
+    
+    st.info("Reporting functionality coming soon")
 
 # ---------------------------
 # Main App
@@ -1276,11 +1411,15 @@ def main():
     
     # Initialize database on first run
     if 'db_initialized' not in st.session_state:
-        if Database.test_connection():
-            init_database()
-            st.session_state.db_initialized = True
-        else:
-            st.warning("Database connection failed. Running in demo mode.")
+        try:
+            if Database.test_connection():
+                init_database()
+                st.session_state.db_initialized = True
+            else:
+                st.warning("Database connection failed. Running in demo mode.")
+                st.session_state.demo_mode = True
+        except Exception as e:
+            st.warning(f"Database initialization error: {str(e)}. Running in demo mode.")
             st.session_state.demo_mode = True
     
     # Render sidebar
@@ -1292,20 +1431,15 @@ def main():
     elif st.session_state.page == "Products":
         render_products()
     elif st.session_state.page == "Sales":
-        st.title("Sales")
-        st.info("Sales page - Coming soon!")
+        render_sales()
     elif st.session_state.page == "Restock":
-        st.title("Restock")
-        st.info("Restock page - Coming soon!")
+        render_restock()
     elif st.session_state.page == "Suppliers":
-        st.title("Suppliers")
-        st.info("Suppliers page - Coming soon!")
+        render_suppliers()
     elif st.session_state.page == "Categories":
-        st.title("Categories")
-        st.info("Categories page - Coming soon!")
+        render_categories()
     elif st.session_state.page == "Reports":
-        st.title("Reports")
-        st.info("Reports page - Coming soon!")
+        render_reports()
     elif st.session_state.page == "Settings":
         st.title("Settings")
         
@@ -1322,8 +1456,8 @@ def main():
                 with col2:
                     st.checkbox("Prevent Negative Stock", 
                               key="prevent_negative_stock", value=True)
-                    st.checkbox("Low Stock Email Alerts", value=True)
-                    st.checkbox("Auto-backup Daily", value=True)
+                    st.checkbox("Low Stock Email Alerts", value=False)
+                    st.checkbox("Auto-backup Daily", value=False)
             
             # User settings
             with st.expander("User Settings"):
@@ -1350,4 +1484,10 @@ def main():
 # Run the app
 # ---------------------------
 if __name__ == "__main__":
+    # Create necessary directories
+    import os
+    os.makedirs("data", exist_ok=True)
+    os.makedirs("backups", exist_ok=True)
+    os.makedirs("logs", exist_ok=True)
+    
     main()
