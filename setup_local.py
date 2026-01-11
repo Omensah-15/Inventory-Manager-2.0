@@ -114,4 +114,135 @@ def create_env_file():
     with open(env_example, 'r') as f:
         content = f.read()
     
-    with open(
+    with open(env_file, 'w') as f:
+        f.write(content)
+    
+    print("✓ Created .env file from template")
+    print("\nPlease edit .env file with your database credentials")
+    return True
+
+def setup_database():
+    """Setup PostgreSQL database"""
+    print_header("Setting up Database")
+    
+    # Load environment variables
+    from dotenv import load_dotenv
+    load_dotenv()
+    
+    db_name = os.getenv('DB_NAME', 'invypro')
+    db_user = os.getenv('DB_USER', 'invypro_user')
+    db_password = os.getenv('DB_PASSWORD', 'invypro_pass')
+    
+    print(f"Database: {db_name}")
+    print(f"User: {db_user}")
+    
+    # Database setup commands
+    setup_commands = f"""
+# 1. Start PostgreSQL service
+sudo service postgresql start  # Linux
+# or
+brew services start postgresql  # macOS
+
+# 2. Login to PostgreSQL as postgres user
+sudo -u postgres psql
+
+# 3. Run these SQL commands:
+CREATE DATABASE {db_name};
+CREATE USER {db_user} WITH PASSWORD '{db_password}';
+GRANT ALL PRIVILEGES ON DATABASE {db_name} TO {db_user};
+\\c {db_name}
+GRANT ALL ON SCHEMA public TO {db_user};
+
+# 4. Exit
+\\q
+"""
+    
+    print("\nRun these commands in your terminal:")
+    print(setup_commands)
+    
+    input("\nPress Enter after setting up the database...")
+    return True
+
+def initialize_database():
+    """Initialize database schema"""
+    print_header("Initializing Database")
+    
+    try:
+        # Import and run database initialization
+        sys.path.insert(0, str(Path.cwd()))
+        from app import init_database, Database
+        
+        if Database.test_connection():
+            init_database()
+            print("✓ Database initialized successfully")
+            return True
+        else:
+            print("✗ Cannot connect to database")
+            return False
+            
+    except Exception as e:
+        print(f"✗ Database initialization failed: {str(e)}")
+        return False
+
+def create_directories():
+    """Create necessary directories"""
+    print_header("Creating Directories")
+    
+    directories = ['data', 'backups', 'logs', 'scripts']
+    
+    for dir_name in directories:
+        dir_path = Path(dir_name)
+        dir_path.mkdir(exist_ok=True)
+        print(f"✓ Created {dir_name}/ directory")
+    
+    return True
+
+def setup_complete():
+    """Display setup completion message"""
+    print_header("Setup Complete!")
+    
+    print("\n InvyPro is ready to use!")
+    print("\nNext steps:")
+    print("1. Start the application:")
+    print("   streamlit run app.py")
+    print("\n2. Access the application:")
+    print("   http://localhost:8501")
+    print("\n3. Default credentials:")
+    print("   Username: admin")
+    print("   Password: admin123")
+    print("\n4. Create your organization account")
+    print("\n5. Start managing your inventory!")
+    
+    # Quick commands
+    print("\n Useful commands:")
+    print("   Start app: streamlit run app.py")
+    print("   Backup DB: ./scripts/backup_db.sh")
+    print("   Restore DB: ./scripts/restore_db.sh <backup_file>")
+    
+    return True
+
+def main():
+    """Main setup function"""
+    print_header("InvyPro Local Setup")
+    
+    steps = [
+        ("Checking Python", check_python),
+        ("Checking PostgreSQL", check_postgres),
+        ("Creating directories", create_directories),
+        ("Installing dependencies", install_dependencies),
+        ("Configuring environment", create_env_file),
+        ("Setting up database", setup_database),
+        ("Initializing database", initialize_database),
+        ("Finalizing setup", setup_complete),
+    ]
+    
+    for step_name, step_func in steps:
+        if not step_func():
+            print(f"\n Setup failed at: {step_name}")
+            print("Please fix the issue and run the setup again.")
+            sys.exit(1)
+    
+    print("\n Setup completed successfully!")
+
+if __name__ == "__main__":
+    main()
