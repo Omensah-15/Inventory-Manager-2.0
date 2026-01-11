@@ -1,1 +1,15 @@
-# invypro-postgres
+# InvyPro 2.0 - Professional Inventory Management System
+
+A modern, multi-organization inventory management system built with Streamlit and PostgreSQL.
+
+## Features
+
+- **Multi-Organization Support**: Complete data isolation between organizations
+- **User Management**: Role-based access control (Admin/Manager/Staff)
+- **Product Management**: SKU-based catalog with categories and suppliers
+- **Inventory Tracking**: Real-time stock levels with reorder alerts
+- **Transaction Recording**: Sales, purchases, adjustments
+- **Supplier Management**: Maintain supplier information
+- **Reporting**: Analytics and data visualization
+- **Data Export**: CSV export functionality
+- **Audit Logging**: Complete activity tracking
