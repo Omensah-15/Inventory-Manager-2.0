@@ -1484,7 +1484,7 @@ def render_products():
                                 st.success(result['message'])
                                 st.rerun()
                             else:
-                                st.error(result['message"])
+                                st.error(result['message'])
                     
                     with col_delete:
                         delete_clicked = st.form_submit_button("Delete Product", type="secondary", use_container_width=True)
@@ -1890,7 +1890,7 @@ def render_reports():
                 with col_dl1:
                     csv = sales_report.to_csv(index=False)
                     st.download_button(
-                        label="📥 Download CSV",
+                        label="Download CSV",
                         data=csv,
                         file_name=f"sales_report_{start_date}_{end_date}.csv",
                         mime="text/csv",
@@ -1914,7 +1914,7 @@ def render_reports():
                     
                     excel_buffer.seek(0)
                     st.download_button(
-                        label="📊 Download Excel",
+                        label="Download Excel",
                         data=excel_buffer,
                         file_name=f"sales_report_{start_date}_{end_date}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -1932,7 +1932,7 @@ def render_reports():
                     <p><strong>Average Sale:</strong> {st.session_state.currency} {avg_sale:,.2f}</p>
                     """
                     st.download_button(
-                        label="📄 Download Summary",
+                        label="Download Summary",
                         data=html_report,
                         file_name=f"sales_summary_{start_date}_{end_date}.html",
                         mime="text/html",
@@ -1997,7 +1997,7 @@ def render_reports():
             with col_dl1:
                 csv = inventory_summary.to_csv(index=False)
                 st.download_button(
-                    label="📥 Download CSV",
+                    label="Download CSV",
                     data=csv,
                     file_name="inventory_analysis.csv",
                     mime="text/csv",
@@ -2011,7 +2011,7 @@ def render_reports():
                     inventory_summary.to_excel(writer, sheet_name='Inventory Analysis', index=False)
                 excel_buffer.seek(0)
                 st.download_button(
-                    label="📊 Download Excel",
+                    label="Download Excel",
                     data=excel_buffer,
                     file_name="inventory_analysis.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2082,7 +2082,7 @@ def render_reports():
                 # Download low stock report
                 csv = low_stock_items.to_csv(index=False)
                 st.download_button(
-                    label="📥 Download Low Stock Report",
+                    label="Download Low Stock Report",
                     data=csv,
                     file_name="low_stock_report.csv",
                     mime="text/csv",
@@ -2110,7 +2110,7 @@ def render_reports():
                 # Download out of stock report
                 csv = out_of_stock_items.to_csv(index=False)
                 st.download_button(
-                    label="📥 Download Out of Stock Report",
+                    label="Download Out of Stock Report",
                     data=csv,
                     file_name="out_of_stock_report.csv",
                     mime="text/csv",
@@ -2163,7 +2163,7 @@ def render_reports():
                 
                 excel_buffer.seek(0)
                 st.download_button(
-                    label="📦 Download Complete Database",
+                    label="Download Complete Database",
                     data=excel_buffer,
                     file_name=f"invypro_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -2193,7 +2193,7 @@ def render_reports():
                 
                 csv = sample_data.to_csv(index=False)
                 st.download_button(
-                    label="📥 Download Custom Report",
+                    label="Download Custom Report",
                     data=csv,
                     file_name=f"custom_report_{report_type.lower().replace(' ', '_')}_{datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv",
