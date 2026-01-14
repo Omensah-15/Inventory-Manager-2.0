@@ -2393,7 +2393,7 @@ def main():
     st.markdown("---")
     col_footer1, col_footer2, col_footer3 = st.columns(3)
     with col_footer2:
-        st.caption(f"InvyPro v1.0 • Database: {st.session_state.get('db_type', 'SQLite')}")
+        st.caption(f"InvyPro v2.0 • Database: {st.session_state.get('db_type', 'SQLite')}")
 
 # ============================================================================
 # APPLICATION ENTRY POINT
