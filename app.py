@@ -409,6 +409,9 @@ def initialize_database():
         "CREATE INDEX IF NOT EXISTS idx_products_sku ON products(sku);",
         "CREATE INDEX IF NOT EXISTS idx_transactions_org ON transactions(organization);",
         "CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(created_at);"
+        "CREATE INDEX IF NOT EXISTS idx_transactions_product ON transactions(product_id);",
+        "CREATE INDEX IF NOT EXISTS idx_products_category ON products(category);",
+        "CREATE INDEX IF NOT EXISTS idx_products_quantity ON products(quantity);",
     ]
     
     try:
