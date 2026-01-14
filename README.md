@@ -4,7 +4,7 @@ A modern, multi-organization inventory management system built with Streamlit an
 Try it here: [InvyPro 2.0](https://syndromic-ai-epidemic-alert-system-yqfnwwwdxawqrxjsucfhgv.streamlit.app/)
 
 ## App Screenshot:
-![image alt](https://github.com/Omensah-15/Inventory-Manager-2.0/blob/6b4eaffa48608e201af7b7c13a02d7fa3803b021/App_screenshot.png)
+![image alt](https://github.com/Omensah-15/Inventory-Manager-2.0/blob/79bed768240351b267dc4f6d0b8fca1cf1cf3d6a/App_screenshot.png)
 
 ## Features
 
