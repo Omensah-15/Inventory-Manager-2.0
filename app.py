@@ -902,6 +902,9 @@ def record_transaction(transaction_data: dict):
         )
         
         # Update product stock based on transaction type
+        # In record_transaction(), add validation:
+        if transaction_data['type'] == 'adjustment' and transaction_data['quantity'] < 0:
+            return {"success": False, "message": "Adjustment quantity cannot be negative"}
         if transaction_data['type'] in ['sale', 'purchase', 'adjustment']:
             current_qty_result = execute_query(
                 "SELECT quantity FROM products WHERE product_id = ? AND organization = ?",
