@@ -1225,19 +1225,20 @@ def render_products():
             
             st.caption(f"Showing {len(products)} products")
             
-            display_df = products[['sku', 'name', 'category', 'quantity', 'cost_price', 'sell_price', 'location']].copy()
+            display_df = products[['sku', 'name', 'category', 'quantity', 'reorder_level', 'cost_price', 'sell_price', 'location']].copy()
             display_df['cost_price'] = display_df['cost_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
             display_df['sell_price'] = display_df['sell_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
             
             def get_stock_status(row):
                 if row['quantity'] == 0:
-                    return "Out of Stock"
-                elif row['quantity'] <= products.loc[products['sku'] == row['sku'], 'reorder_level'].values[0]:
-                    return "Low Stock"
+                    return "🔴 Out of Stock"
+                elif row['quantity'] <= row['reorder_level']:
+                    return "🟡 Low Stock"
                 else:
-                    return "In Stock"
+                    return "🟢 In Stock"
             
             display_df['status'] = display_df.apply(get_stock_status, axis=1)
+            display_df = display_df.drop('reorder_level', axis=1)
             
             st.dataframe(
                 display_df,
