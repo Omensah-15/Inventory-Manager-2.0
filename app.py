@@ -1058,15 +1058,6 @@ def render_sidebar():
             if st.button("Logout", use_container_width=True, type="secondary", key="logout_button"):
                 logout_user()
             
-            st.markdown("---")
-            
-            pages = {
-                "Dashboard": "📊",
-                "Products": "📦",
-                "Transactions": "💱",
-                "Suppliers": "🤝",
-                "Reports": "📈",
-                "Settings": "⚙️"
             }
             
             for page_name, icon in pages.items():
