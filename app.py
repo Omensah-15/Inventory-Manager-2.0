@@ -1061,12 +1061,12 @@ def render_sidebar():
             st.markdown("---")
             
             pages = {
-                "Dashboard": "📊",
-                "Products": "📦",
-                "Transactions": "💱",
-                "Suppliers": "🤝",
-                "Reports": "📈",
-                "Settings": "⚙️"
+                "Dashboard",
+                "Products",
+                "Transactions",
+                "Suppliers",
+                "Reports",
+                "Settings"
             
             }
             
