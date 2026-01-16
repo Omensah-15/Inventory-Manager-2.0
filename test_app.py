@@ -578,12 +578,15 @@ def render_backup_management():
                 st.error(result['message'])
     
     with col2:
+        # FIX: Remove the manual session state assignment
+        # Just use the checkbox value directly - Streamlit handles the state
         auto_backup = st.checkbox(
             "Automatic Backup on Startup",
             value=st.session_state.get('auto_backup', False),
-            key="auto_backup_toggle"
+            key="auto_backup"  # Changed key name to match the session state key
         )
-        st.session_state.auto_backup = auto_backup
+        # Don't manually assign - Streamlit does this automatically
+        # st.session_state.auto_backup = auto_backup  # REMOVE THIS LINE
     
     st.markdown("---")
     st.markdown("#### Available Backups")
@@ -663,7 +666,6 @@ def render_backup_management():
                 st.rerun()
             else:
                 st.info(f"Only {len(backups)} backup(s) exist. No cleanup needed.")
-
 
 
 # ============================================================================
