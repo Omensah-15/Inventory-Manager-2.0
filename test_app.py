@@ -1366,7 +1366,7 @@ def render_dashboard():
         st.markdown(f"""
         <div class='metric-card'>
             <div class='metric-title'>Monthly Sales</div>
-            <div class='metric-value'>{metrics.get('monthly_sales', 'GHS 0.00')}</div>
+            <div class='metric-value'>{metrics.get('monthly_sales', f"{st.session_state.currency} 690.00")}</div>
             <div class='metric-subtitle'>Last 30 days</div>
         </div>
         """, unsafe_allow_html=True)
