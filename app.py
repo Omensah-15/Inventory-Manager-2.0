@@ -18,6 +18,8 @@ import plotly.express as px
 import plotly.graph_objects as go
 from io import BytesIO
 import base64
+import shutil
+from pathlib import Path
 
 # ============================================================================
 # CONFIGURATION
@@ -454,6 +456,240 @@ def create_default_admin():
         st.warning(f"Could not create default admin: {str(e)}")
 
 # ============================================================================
+# BACKUP MANAGEMENT
+# ============================================================================
+
+def create_backup():
+    """Create a backup of the database"""
+    try:
+        backup_dir = Path("backups")
+        backup_dir.mkdir(exist_ok=True)
+        
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        org = get_current_organization()
+        org_safe = org.replace(" ", "_").replace("/", "_") if org else "all"
+        
+        backup_filename = f"backup_{org_safe}_{timestamp}.db"
+        backup_path = backup_dir / backup_filename
+        
+        shutil.copy2(config.DB_FILE, backup_path)
+        
+        log_activity(
+            user_id=st.session_state.get('user_id'),
+            action="backup_created",
+            details=f"Database backup created: {backup_filename}"
+        )
+        
+        return {"success": True, "message": f"Backup created: {backup_filename}", "filename": backup_filename}
+    
+    except Exception as e:
+        return {"success": False, "message": f"Backup failed: {str(e)}"}
+
+
+def list_backups():
+    """List all available backups"""
+    try:
+        backup_dir = Path("backups")
+        if not backup_dir.exists():
+            return []
+        
+        backups = []
+        for backup_file in backup_dir.glob("backup_*.db"):
+            try:
+                stat = backup_file.stat()
+                backups.append({
+                    'filename': backup_file.name,
+                    'path': str(backup_file),
+                    'size': stat.st_size,
+                    'created': datetime.fromtimestamp(stat.st_mtime),
+                    'size_mb': stat.st_size / (1024 * 1024)
+                })
+            except Exception as e:
+                print(f"Error reading backup file {backup_file}: {e}")
+                continue
+        
+        backups.sort(key=lambda x: x['created'], reverse=True)
+        return backups
+    
+    except Exception as e:
+        print(f"Error listing backups: {e}")
+        return []
+
+
+def restore_backup(backup_filename):
+    """Restore database from backup"""
+    try:
+        backup_path = Path("backups") / backup_filename
+        
+        if not backup_path.exists():
+            return {"success": False, "message": "Backup file not found"}
+        
+        create_backup()
+        shutil.copy2(backup_path, config.DB_FILE)
+        
+        log_activity(
+            user_id=st.session_state.get('user_id'),
+            action="backup_restored",
+            details=f"Database restored from: {backup_filename}"
+        )
+        
+        return {"success": True, "message": f"Database restored from {backup_filename}"}
+    
+    except Exception as e:
+        return {"success": False, "message": f"Restore failed: {str(e)}"}
+
+
+def delete_backup(backup_filename):
+    """Delete a backup file"""
+    try:
+        backup_path = Path("backups") / backup_filename
+        
+        if not backup_path.exists():
+            return {"success": False, "message": "Backup file not found"}
+        
+        backup_path.unlink()
+        
+        log_activity(
+            user_id=st.session_state.get('user_id'),
+            action="backup_deleted",
+            details=f"Backup deleted: {backup_filename}"
+        )
+        
+        return {"success": True, "message": "Backup deleted successfully"}
+    
+    except Exception as e:
+        return {"success": False, "message": f"Delete failed: {str(e)}"}
+
+
+def render_backup_management():
+    """Render backup management section in settings"""
+    st.markdown("### Backup Management")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        if st.button("Create Backup Now", use_container_width=True, type="primary", key="create_backup_btn"):
+            with st.spinner("Creating backup..."):
+                result = create_backup()
+                if result['success']:
+                    st.success(result['message'])
+                    st.rerun()
+                else:
+                    st.error(result['message'])
+    
+    with col2:
+        auto_backup_enabled = st.checkbox(
+            "Automatic Backup on Startup",
+            value=st.session_state.get('auto_backup_enabled', False),
+            key="auto_backup_enabled",
+            help="Automatically create a backup every time the app starts"
+        )
+    
+    st.markdown("---")
+    st.markdown("#### Available Backups")
+    
+    try:
+        backups = list_backups()
+        
+        if backups:
+            st.info(f"Found {len(backups)} backup(s)")
+            
+            for idx, backup in enumerate(backups):
+                with st.expander(f"{backup['filename']} ({backup['size_mb']:.2f} MB)", expanded=False):
+                    col_info, col_actions = st.columns([2, 1])
+                    
+                    with col_info:
+                        st.write(f"**Created:** {backup['created'].strftime('%Y-%m-%d %H:%M:%S')}")
+                        st.write(f"**Size:** {backup['size_mb']:.2f} MB")
+                        st.write(f"**File:** {backup['filename']}")
+                    
+                    with col_actions:
+                        try:
+                            with open(backup['path'], 'rb') as f:
+                                backup_data = f.read()
+                                st.download_button(
+                                    label="Download",
+                                    data=backup_data,
+                                    file_name=backup['filename'],
+                                    mime="application/octet-stream",
+                                    use_container_width=True,
+                                    key=f"download_backup_{idx}"
+                                )
+                        except Exception as e:
+                            st.error(f"Cannot download: {str(e)}")
+                        
+                        if st.button("Restore", use_container_width=True, key=f"restore_backup_{idx}"):
+                            if st.session_state.get(f'confirm_restore_{idx}', False):
+                                with st.spinner("Restoring backup..."):
+                                    result = restore_backup(backup['filename'])
+                                    if result['success']:
+                                        st.success(result['message'])
+                                        st.info("Please refresh the page to see changes")
+                                        st.session_state[f'confirm_restore_{idx}'] = False
+                                    else:
+                                        st.error(result['message'])
+                            else:
+                                st.session_state[f'confirm_restore_{idx}'] = True
+                                st.warning("Click 'Restore' again to confirm. This will replace your current database!")
+                                st.rerun()
+                        
+                        if st.button("🗑️ Delete", use_container_width=True, key=f"delete_backup_{idx}"):
+                            if st.session_state.get(f'confirm_delete_{idx}', False):
+                                with st.spinner("Deleting backup..."):
+                                    result = delete_backup(backup['filename'])
+                                    if result['success']:
+                                        st.success(result['message'])
+                                        st.session_state[f'confirm_delete_{idx}'] = False
+                                        st.rerun()
+                                    else:
+                                        st.error(result['message'])
+                            else:
+                                st.session_state[f'confirm_delete_{idx}'] = True
+                                st.warning("Click 'Delete' again to confirm")
+                                st.rerun()
+        else:
+            st.info("No backups available. Create your first backup using the button above.")
+    
+    except Exception as e:
+        st.error(f"Error loading backups: {str(e)}")
+    
+    st.markdown("---")
+    st.markdown("#### Backup Maintenance")
+    
+    col_clean1, col_clean2 = st.columns(2)
+    
+    with col_clean1:
+        max_backups = st.number_input(
+            "Keep last N backups",
+            min_value=1,
+            max_value=50,
+            value=10,
+            help="Automatically delete old backups beyond this limit",
+            key="max_backups_input"
+        )
+    
+    with col_clean2:
+        if st.button("Cleanup Old Backups", use_container_width=True, key="cleanup_backups_btn"):
+            try:
+                backups = list_backups()
+                if len(backups) > max_backups:
+                    with st.spinner("Cleaning up old backups..."):
+                        to_delete = backups[max_backups:]
+                        deleted_count = 0
+                        
+                        for backup in to_delete:
+                            result = delete_backup(backup['filename'])
+                            if result['success']:
+                                deleted_count += 1
+                        
+                        st.success(f"Deleted {deleted_count} old backup(s)")
+                        st.rerun()
+                else:
+                    st.info(f"Only {len(backups)} backup(s) exist. No cleanup needed.")
+            except Exception as e:
+                st.error(f"Cleanup failed: {str(e)}")
+
+# ============================================================================
 # SECURITY & AUTHENTICATION
 # ============================================================================
 def hash_password(password: str, salt: Optional[str] = None) -> Tuple[str, str]:
@@ -874,7 +1110,7 @@ def get_recent_transactions(limit: int = 10):
     return fetch_dataframe(query, (org, limit))
 
 def record_transaction(transaction_data: dict):
-    """Record a new transaction"""
+    """Record a new transaction - FIXED VERSION"""
     org = get_current_organization()
     if not org:
         return {"success": False, "message": "Not authenticated"}
@@ -902,32 +1138,33 @@ def record_transaction(transaction_data: dict):
         )
         
         # Update product stock based on transaction type
-        # In record_transaction(), add validation:
-        if transaction_data['type'] == 'adjustment' and transaction_data['quantity'] < 0:
-            return {"success": False, "message": "Adjustment quantity cannot be negative"}
-        if transaction_data['type'] in ['sale', 'purchase', 'adjustment']:
-            current_qty_result = execute_query(
-                "SELECT quantity FROM products WHERE product_id = ? AND organization = ?",
-                (transaction_data['product_id'], org),
-                fetch=True
-            )
+        current_qty_result = execute_query(
+            "SELECT quantity FROM products WHERE product_id = ? AND organization = ?",
+            (transaction_data['product_id'], org),
+            fetch=True
+        )
+        
+        if current_qty_result:
+            current_qty = current_qty_result[0][0]
             
-            if current_qty_result:
-                current_qty = current_qty_result[0][0]
-                
-                if transaction_data['type'] == 'sale':
-                    new_quantity = current_qty - transaction_data['quantity']
-                elif transaction_data['type'] == 'purchase':
-                    new_quantity = current_qty + transaction_data['quantity']
-                elif transaction_data['type'] == 'adjustment':
-                    new_quantity = transaction_data['quantity']
-                else:
-                    new_quantity = current_qty
-                
-                execute_query(
-                    "UPDATE products SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ?",
-                    (new_quantity, transaction_data['product_id'])
-                )
+            if transaction_data['type'] == 'sale':
+                new_quantity = current_qty - transaction_data['quantity']
+            elif transaction_data['type'] == 'purchase':
+                new_quantity = current_qty + transaction_data['quantity']
+            elif transaction_data['type'] == 'adjustment':
+                # For adjustment, the quantity is the NEW total quantity
+                new_quantity = transaction_data['quantity']
+            else:  # transfer
+                new_quantity = current_qty
+            
+            # Ensure quantity doesn't go negative
+            if new_quantity < 0:
+                return {"success": False, "message": "Transaction would result in negative stock"}
+            
+            execute_query(
+                "UPDATE products SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ?",
+                (new_quantity, transaction_data['product_id'])
+            )
         
         # Log activity
         product_name_result = execute_query(
@@ -1106,7 +1343,7 @@ def render_dashboard():
         st.markdown(f"""
         <div class='metric-card'>
             <div class='metric-title'>Stock Value</div>
-            <div class='metric-value'>{metrics.get('stock_value', 'GHS 0.00')}</div>
+            <div class='metric-value'>{metrics.get('stock_value', f"{st.session_state.currency} 0.00")}</div>
             <div class='metric-subtitle'>Current value</div>
         </div>
         """, unsafe_allow_html=True)
@@ -1130,7 +1367,7 @@ def render_dashboard():
         st.markdown(f"""
         <div class='metric-card'>
             <div class='metric-title'>Monthly Sales</div>
-            <div class='metric-value'>{metrics.get('monthly_sales', 'GHS 0.00')}</div>
+            <div class='metric-value'>{metrics.get('monthly_sales', f"{st.session_state.currency} 0.00")}</div>
             <div class='metric-subtitle'>Last 30 days</div>
         </div>
         """, unsafe_allow_html=True)
@@ -1192,7 +1429,7 @@ def render_dashboard():
             st.rerun()
 
 def render_products():
-    """Render products management page"""
+    """Render products management page - COMPLETE FIX"""
     st.markdown("<h1 class='main-header'>Products</h1>", unsafe_allow_html=True)
     
     if not st.session_state.authenticated:
@@ -1205,7 +1442,7 @@ def render_products():
         col_search, col_filter, col_page = st.columns(3)
         
         with col_search:
-            search_term = st.text_input("Search products", placeholder="SKU, name, description...", key="product_search")
+            search_term = st.text_input("🔍 Search products", placeholder="SKU, name, description...", key="product_search")
         
         with col_filter:
             stock_filter = st.selectbox(
@@ -1217,9 +1454,7 @@ def render_products():
         with col_page:
             page_size = st.selectbox("Items per page", [10, 25, 50, 100], index=1, key="page_size")
         
-        page_number = st.number_input("Page", min_value=1, value=1, step=1, key="page_number")
-        
-        products = get_products(search=search_term, page=page_number, page_size=page_size)
+        products = get_products(search=search_term, page=1, page_size=page_size)
         
         if not products.empty:
             # Apply stock filter
@@ -1250,16 +1485,6 @@ def render_products():
             st.dataframe(
                 display_df,
                 use_container_width=True,
-                column_config={
-                    "sku": "SKU",
-                    "name": "Product Name",
-                    "category": "Category",
-                    "quantity": "Quantity",
-                    "cost_price": "Cost",
-                    "sell_price": "Price",
-                    "location": "Location",
-                    "status": "Status"
-                },
                 hide_index=True
             )
             
@@ -1269,7 +1494,7 @@ def render_products():
                 st.download_button(
                     label="Export to CSV",
                     data=csv,
-                    file_name="products_export.csv",
+                    file_name=f"products_{datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv",
                     key="export_csv",
                     use_container_width=True
@@ -1289,67 +1514,30 @@ def render_products():
             col1, col2 = st.columns(2)
             
             with col1:
-                sku = st.text_input("SKU *", help="Unique product identifier", key="add_sku")
-                name = st.text_input("Product Name *", key="add_name")
-                description = st.text_area("Description", key="add_description")
-                category = st.text_input("Category", key="add_category")
-                supplier = st.text_input("Supplier", key="add_supplier")
+                sku = st.text_input("SKU *", help="Unique product identifier")
+                name = st.text_input("Product Name *")
+                description = st.text_area("Description")
+                category = st.text_input("Category")
+                supplier = st.text_input("Supplier")
             
             with col2:
-                unit = st.selectbox("Unit", ["pcs", "kg", "liters", "boxes", "meters", "units", "pairs", "dozen"], key="add_unit")
-                location = st.text_input("Location", placeholder="Shelf A1, Warehouse B, etc.", key="add_location")
-                barcode = st.text_input("Barcode (Optional)", key="add_barcode")
-                notes = st.text_area("Notes", key="add_notes")
+                unit = st.selectbox("Unit", ["pcs", "kg", "liters", "boxes", "meters", "units", "pairs", "dozen"])
+                location = st.text_input("Location", placeholder="Shelf A1, Warehouse B, etc.")
+                barcode = st.text_input("Barcode (Optional)")
+                notes = st.text_area("Notes")
             
             col3, col4, col5 = st.columns(3)
             
             with col3:
-                cost_price = st.number_input(
-                    "Cost Price *",
-                    min_value=0.0,
-                    value=0.0,
-                    step=0.01,
-                    format="%.2f",
-                    help="Purchase cost per unit",
-                    key="add_cost_price"
-                )
-                quantity = st.number_input(
-                    "Initial Quantity *",
-                    min_value=0,
-                    value=0,
-                    step=1,
-                    help="Current stock level",
-                    key="add_quantity"
-                )
+                cost_price = st.number_input("Cost Price *", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+                quantity = st.number_input("Initial Quantity *", min_value=0, value=0, step=1)
             
             with col4:
-                sell_price = st.number_input(
-                    "Selling Price *",
-                    min_value=0.0,
-                    value=0.0,
-                    step=0.01,
-                    format="%.2f",
-                    help="Selling price per unit",
-                    key="add_sell_price"
-                )
-                min_quantity = st.number_input(
-                    "Minimum Quantity",
-                    min_value=0,
-                    value=5,
-                    step=1,
-                    help="Minimum stock level before alert",
-                    key="add_min_quantity"
-                )
+                sell_price = st.number_input("Selling Price *", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+                min_quantity = st.number_input("Minimum Quantity", min_value=0, value=5, step=1)
             
             with col5:
-                reorder_level = st.number_input(
-                    "Reorder Level *",
-                    min_value=0,
-                    value=10,
-                    step=1,
-                    help="Reorder when stock reaches this level",
-                    key="add_reorder_level"
-                )
+                reorder_level = st.number_input("Reorder Level *", min_value=0, value=10, step=1)
             
             submitted = st.form_submit_button("Save Product", type="primary", use_container_width=True)
             
@@ -1380,10 +1568,11 @@ def render_products():
                     
                     result = add_product(product_data)
                     if result['success']:
-                        st.success(result['message'])
+                        st.success(f"{result['message']}")
+                        st.balloons()
                         st.rerun()
                     else:
-                        st.error(result['message'])
+                        st.error(f"{result['message']}")
     
     with tab3:
         st.subheader("Edit Product")
@@ -1391,123 +1580,128 @@ def render_products():
         all_products = get_products(page_size=1000)
         
         if not all_products.empty:
-            product_options = ["-- Select Product --"] + all_products['name'].tolist()
-            selected_product = st.selectbox("Select product to edit", product_options, key="edit_product_select")
+            # Create selection list
+            product_list = all_products[['product_id', 'name', 'sku']].to_dict('records')
+            product_display = [f"{p['name']} (SKU: {p['sku']})" for p in product_list]
             
-            if selected_product != "-- Select Product --":
-                product_idx = all_products[all_products['name'] == selected_product].index[0]
-                product_data = all_products.iloc[product_idx]
-                
-                with st.form("edit_product_form"):
-                    col1, col2 = st.columns(2)
-                    
-                    with col1:
-                        edit_sku = st.text_input("SKU", value=product_data['sku'], key="edit_sku")
-                        edit_name = st.text_input("Product Name", value=product_data['name'], key="edit_name")
-                        edit_description = st.text_area("Description", value=product_data['description'] or "", key="edit_description")
-                        edit_category = st.text_input("Category", value=product_data['category'] or "", key="edit_category")
-                        edit_supplier = st.text_input("Supplier", value=product_data['supplier'] or "", key="edit_supplier")
-                    
-                    with col2:
-                        edit_unit = st.selectbox("Unit", 
-                                               ["pcs", "kg", "liters", "boxes", "meters", "units", "pairs", "dozen"],
-                                               index=["pcs", "kg", "liters", "boxes", "meters", "units", "pairs", "dozen"].index(
-                                                   product_data['unit'] if product_data['unit'] in 
-                                                   ["pcs", "kg", "liters", "boxes", "meters", "units", "pairs", "dozen"] 
-                                                   else "pcs"
-                                               ), key="edit_unit")
-                        edit_location = st.text_input("Location", value=product_data['location'] or "", key="edit_location")
-                        edit_barcode = st.text_input("Barcode", value=product_data['barcode'] or "", key="edit_barcode")
-                        edit_notes = st.text_area("Notes", value=product_data['notes'] or "", key="edit_notes")
-                    
-                    col3, col4, col5 = st.columns(3)
-                    
-                    with col3:
-                        edit_cost = st.number_input(
-                            "Cost Price",
-                            min_value=0.0,
-                            value=float(product_data['cost_price']),
-                            step=0.01,
-                            format="%.2f",
-                            key="edit_cost"
-                        )
-                        edit_quantity = st.number_input(
-                            "Quantity",
-                            min_value=0,
-                            value=int(product_data['quantity']),
-                            step=1,
-                            key="edit_quantity"
-                        )
-                    
-                    with col4:
-                        edit_price = st.number_input(
-                            "Selling Price",
-                            min_value=0.0,
-                            value=float(product_data['sell_price']),
-                            step=0.01,
-                            format="%.2f",
-                            key="edit_price"
-                        )
-                        edit_min_qty = st.number_input(
-                            "Minimum Quantity",
-                            min_value=0,
-                            value=int(product_data['min_quantity']),
-                            step=1,
-                            key="edit_min_qty"
-                        )
-                    
-                    with col5:
-                        edit_reorder = st.number_input(
-                            "Reorder Level",
-                            min_value=0,
-                            value=int(product_data['reorder_level']),
-                            step=1,
-                            key="edit_reorder"
-                        )
-                    
-                    col_update, col_delete = st.columns(2)
-                    
-                    with col_update:
-                        update_submitted = st.form_submit_button("Update Product", use_container_width=True)
-                        if update_submitted:
-                            updated_data = {
-                                'sku': edit_sku,
-                                'name': edit_name,
-                                'description': edit_description,
-                                'category': edit_category,
-                                'supplier': edit_supplier,
-                                'unit': edit_unit,
-                                'cost_price': edit_cost,
-                                'sell_price': edit_price,
-                                'quantity': edit_quantity,
-                                'min_quantity': edit_min_qty,
-                                'reorder_level': edit_reorder,
-                                'location': edit_location,
-                                'barcode': edit_barcode,
-                                'notes': edit_notes
-                            }
-                            
-                            result = update_product(product_data['product_id'], updated_data)
-                            if result['success']:
-                                st.success(result['message'])
-                                st.rerun()
-                            else:
-                                st.error(result['message'])
-                    
-                    with col_delete:
-                        delete_clicked = st.form_submit_button("Delete Product", type="secondary", use_container_width=True)
-                        if delete_clicked:
-                            result = delete_product(product_data['product_id'])
-                            if result['success']:
-                                st.success(result['message'])
-                                st.rerun()
-                            else:
-                                st.error(result['message'])
+            selected_index = st.selectbox(
+                "Select product to edit",
+                range(len(product_display)),
+                format_func=lambda i: product_display[i],
+                key="edit_product_select"
+            )
+            
+            # Get selected product
+            selected_product_id = product_list[selected_index]['product_id']
+            product_data = all_products[all_products['product_id'] == selected_product_id].iloc[0]
+            
+            st.info(f"Editing: {product_data['name']} (SKU: {product_data['sku']})")
+            
+            # Create form
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                edit_sku = st.text_input("SKU", value=product_data['sku'], disabled=True, key="edit_sku")
+                edit_name = st.text_input("Product Name *", value=product_data['name'], key="edit_name")
+                edit_description = st.text_area("Description", value=product_data['description'] or "", key="edit_description")
+                edit_category = st.text_input("Category", value=product_data['category'] or "", key="edit_category")
+                edit_supplier = st.text_input("Supplier", value=product_data['supplier'] or "", key="edit_supplier")
+            
+            with col2:
+                units = ["pcs", "kg", "liters", "boxes", "meters", "units", "pairs", "dozen"]
+                unit_index = units.index(product_data['unit']) if product_data['unit'] in units else 0
+                edit_unit = st.selectbox("Unit", units, index=unit_index, key="edit_unit")
+                edit_location = st.text_input("Location", value=product_data['location'] or "", key="edit_location")
+                edit_barcode = st.text_input("Barcode", value=product_data['barcode'] or "", key="edit_barcode")
+                edit_notes = st.text_area("Notes", value=product_data['notes'] or "", key="edit_notes")
+            
+            col3, col4, col5 = st.columns(3)
+            
+            with col3:
+                edit_cost = st.number_input("Cost Price *", min_value=0.0, value=float(product_data['cost_price']), step=0.01, format="%.2f", key="edit_cost")
+                edit_quantity = st.number_input("Quantity *", min_value=0, value=int(product_data['quantity']), step=1, key="edit_quantity")
+            
+            with col4:
+                edit_price = st.number_input("Selling Price *", min_value=0.0, value=float(product_data['sell_price']), step=0.01, format="%.2f", key="edit_price")
+                edit_min_qty = st.number_input("Minimum Quantity", min_value=0, value=int(product_data['min_quantity']), step=1, key="edit_min_qty")
+            
+            with col5:
+                edit_reorder = st.number_input("Reorder Level *", min_value=0, value=int(product_data['reorder_level']), step=1, key="edit_reorder")
+            
+            st.markdown("---")
+            
+            # Action buttons
+            col_update, col_delete, col_cancel = st.columns([2, 2, 1])
+            
+            # Initialize delete confirmation in session state
+            delete_confirm_key = f"delete_confirm_{selected_product_id}"
+            if delete_confirm_key not in st.session_state:
+                st.session_state[delete_confirm_key] = False
+            
+            with col_update:
+                if st.button("Update Product", use_container_width=True, type="primary", key=f"btn_update_{selected_product_id}"):
+                    if not edit_name:
+                        st.error("Product name is required")
+                    elif edit_cost < 0 or edit_price < 0:
+                        st.error("Prices cannot be negative")
+                    elif edit_quantity < 0:
+                        st.error("Quantity cannot be negative")
+                    else:
+                        updated_data = {
+                            'sku': edit_sku,
+                            'name': edit_name,
+                            'description': edit_description,
+                            'category': edit_category,
+                            'supplier': edit_supplier,
+                            'unit': edit_unit,
+                            'cost_price': edit_cost,
+                            'sell_price': edit_price,
+                            'quantity': edit_quantity,
+                            'min_quantity': edit_min_qty,
+                            'reorder_level': edit_reorder,
+                            'location': edit_location,
+                            'barcode': edit_barcode,
+                            'notes': edit_notes
+                        }
+                        
+                        result = update_product(selected_product_id, updated_data)
+                        if result['success']:
+                            st.success(f"Product updated successfully!")
+                            st.balloons()
+                            # Clear confirmation state
+                            st.session_state[delete_confirm_key] = False
+                            st.rerun()
+                        else:
+                            st.error(f"{result['message']}")
+            
+            with col_delete:
+                if not st.session_state[delete_confirm_key]:
+                    if st.button("Delete Product", use_container_width=True, type="secondary", key=f"btn_delete_{selected_product_id}"):
+                        st.session_state[delete_confirm_key] = True
+                        st.rerun()
+                else:
+                    if st.button("CONFIRM DELETE", use_container_width=True, type="secondary", key=f"btn_confirm_delete_{selected_product_id}"):
+                        result = delete_product(selected_product_id)
+                        if result['success']:
+                            st.success(f"Product deleted successfully!")
+                            st.session_state[delete_confirm_key] = False
+                            st.rerun()
+                        else:
+                            st.error(f"{result['message']}")
+            
+            with col_cancel:
+                if st.button("Cancel", use_container_width=True, key=f"btn_cancel_{selected_product_id}"):
+                    st.session_state[delete_confirm_key] = False
+                    st.rerun()
+            
+            # Show warning
+            if st.session_state[delete_confirm_key]:
+                st.error("**WARNING:** Click 'CONFIRM DELETE' to permanently delete this product. This action cannot be undone!")
         else:
-            st.info("No products available to edit. Add products first.")
+            st.info("No products available to edit. Add products first in the 'Add Product' tab.")
 
 def render_transactions():
-    """Render transactions page"""
+    """Render transactions page - COMPLETE FIX"""
     st.markdown("<h1 class='main-header'>Transactions</h1>", unsafe_allow_html=True)
     
     if not st.session_state.authenticated:
@@ -1517,89 +1711,121 @@ def render_transactions():
     tab1, tab2 = st.tabs(["Record Transaction", "Transaction History"])
     
     with tab1:
-        with st.form("record_transaction_form", clear_on_submit=True):
-            st.subheader("Record New Transaction")
+        st.subheader("Record New Transaction")
+        
+        # Get products first
+        products = get_products(page_size=1000)
+        
+        if products.empty:
+            st.warning("No products available. Please add products first.")
+            if st.button("Go to Products", use_container_width=True, key="goto_products_empty"):
+                st.session_state.page = "Products"
+                st.rerun()
+            return
+        
+        # Transaction type and reference
+        col_type, col_ref = st.columns(2)
+        
+        with col_type:
+            transaction_type = st.selectbox(
+                "Transaction Type *",
+                ["sale", "purchase", "adjustment", "transfer"],
+                help="Sale: Selling to customers, Purchase: Buying from suppliers, Adjustment: Stock correction, Transfer: Moving between locations",
+                key="trans_type"
+            )
+        
+        with col_ref:
+            reference = st.text_input("Reference Number", help="Invoice/Purchase order number", key="trans_reference")
+        
+        st.markdown("### Product Details")
+        
+        # Create product selection with index
+        product_list = products[['product_id', 'name', 'sku', 'quantity', 'unit', 'cost_price', 'sell_price']].to_dict('records')
+        product_names = [p['name'] for p in product_list]
+        
+        selected_index = st.selectbox(
+            "Select Product *",
+            range(len(product_names)),
+            format_func=lambda i: product_names[i],
+            key="trans_product_index"
+        )
+        
+        # Get selected product details
+        selected_product = product_list[selected_index]
+        product_id = selected_product['product_id']
+        current_stock = selected_product['quantity']
+        product_unit = selected_product['unit']
+        
+        col_qty, col_price = st.columns(2)
+        
+        with col_qty:
+            st.info(f"Current Stock: {current_stock} {product_unit}")
             
-            col_type, col_ref = st.columns(2)
-            
-            with col_type:
-                transaction_type = st.selectbox(
-                    "Transaction Type *",
-                    ["sale", "purchase", "adjustment", "transfer"],
-                    help="Sale: Selling to customers, Purchase: Buying from suppliers, Adjustment: Stock correction, Transfer: Moving between locations",
-                    key="trans_type"
+            if transaction_type == 'adjustment':
+                quantity = st.number_input(
+                    "New Quantity *",
+                    min_value=0,
+                    value=int(current_stock),
+                    step=1,
+                    help="Set the new stock quantity",
+                    key="trans_quantity"
+                )
+            else:
+                max_qty = current_stock if transaction_type == 'sale' else 999999
+                quantity = st.number_input(
+                    "Quantity *",
+                    min_value=1,
+                    max_value=max_qty if transaction_type == 'sale' else 999999,
+                    value=1,
+                    step=1,
+                    help="Quantity to transact",
+                    key="trans_quantity"
                 )
             
-            with col_ref:
-                reference = st.text_input("Reference Number", help="Invoice/Purchase order number", key="trans_reference")
-            
-            st.markdown("### Product Details")
-            
-            products = get_products(page_size=1000)
-            
-            if not products.empty:
-                product_options = ["-- Select Product --"] + products['name'].tolist()
-                selected_product = st.selectbox("Select Product *", product_options, key="trans_product")
+            if transaction_type == 'sale' and quantity > current_stock:
+                st.error(f"Insufficient stock! Only {current_stock} units available.")
+        
+        with col_price:
+            default_price = selected_product['sell_price'] if transaction_type == 'sale' else selected_product['cost_price']
+            unit_price = st.number_input(
+                "Unit Price *",
+                min_value=0.0,
+                value=float(default_price),
+                step=0.01,
+                format="%.2f",
+                help="Price per unit",
+                key="trans_unit_price"
+            )
+        
+        # Calculate total
+        if transaction_type == 'adjustment':
+            total_amount = quantity * unit_price
+        else:
+            total_amount = quantity * unit_price
+        
+        st.markdown(f"**Total Amount:** {st.session_state.currency} {total_amount:,.2f}")
+        
+        notes = st.text_area("Notes", help="Additional transaction notes", key="trans_notes")
+        
+        # Action buttons
+        col_submit, col_clear = st.columns([3, 1])
+        
+        with col_submit:
+            if st.button("Record Transaction", type="primary", use_container_width=True, key="submit_transaction"):
+                # Validation
+                error = None
                 
-                if selected_product != "-- Select Product --":
-                    product_info = products[products['name'] == selected_product].iloc[0]
-                    product_id = product_info['product_id']
-                    
-                    col_qty, col_price = st.columns(2)
-                    
-                    with col_qty:
-                        st.info(f"Current Stock: {product_info['quantity']} {product_info['unit']}")
-                        quantity = st.number_input(
-                            "Quantity *",
-                            min_value=1,
-                            value=1,
-                            step=1,
-                            help="Quantity to transact",
-                            key="trans_quantity"
-                        )
-                        
-                        if transaction_type == 'sale' and quantity > product_info['quantity']:
-                            st.error(f"Insufficient stock! Only {product_info['quantity']} units available.")
-                    
-                    with col_price:
-                        default_price = product_info['sell_price'] if transaction_type == 'sale' else product_info['cost_price']
-                        unit_price = st.number_input(
-                            "Unit Price *",
-                            min_value=0.0,
-                            value=float(default_price),
-                            step=0.01,
-                            format="%.2f",
-                            help="Price per unit",
-                            key="trans_unit_price"
-                        )
-                    
-                    total_amount = quantity * unit_price
-                    st.markdown(f"**Total Amount:** {st.session_state.currency} {total_amount:,.2f}")
-                    
-                    notes = st.text_area("Notes", help="Additional transaction notes", key="trans_notes")
-                else:
-                    product_id = None
-                    quantity = 1
-                    unit_price = 0.0
-                    total_amount = 0.0
-                    notes = ""
-            else:
-                st.info("No products found. Please add products first.")
-                product_id = None
-                quantity = 1
-                unit_price = 0.0
-                total_amount = 0.0
-                notes = ""
-            
-            submitted = st.form_submit_button("Record Transaction", type="primary", use_container_width=True)
-            
-            if submitted:
-                if not products.empty and selected_product == "-- Select Product --":
-                    st.error("Please select a product")
-                elif products.empty:
-                    st.error("No products available. Please add products first.")
-                elif transaction_type == 'sale' and quantity > product_info['quantity']:
-                    st.error("Cannot complete sale: Insufficient stock")
+                if transaction_type == 'sale' and quantity > current_stock:
+                    error = "Cannot complete sale: Insufficient stock"
+                elif transaction_type == 'adjustment' and quantity < 0:
+                    error = "Adjustment quantity cannot be negative"
+                elif quantity <= 0 and transaction_type != 'adjustment':
+                    error = "Quantity must be greater than 0"
+                elif unit_price < 0:
+                    error = "Price cannot be negative"
+                
+                if error:
+                    st.error(error)
                 else:
                     transaction_data = {
                         'product_id': product_id,
@@ -1613,14 +1839,14 @@ def render_transactions():
                     
                     result = record_transaction(transaction_data)
                     if result['success']:
-                        st.success(result['message'])
+                        st.success(f"{result['message']}")
+                        st.balloons()
                         st.rerun()
                     else:
-                        st.error(result['message'])
+                        st.error(f"{result['message']}")
         
-        if products.empty:
-            if st.button("Go to Products", use_container_width=True, key="goto_products"):
-                st.session_state.page = "Products"
+        with col_clear:
+            if st.button("Clear", use_container_width=True, key="clear_transaction"):
                 st.rerun()
     
     with tab2:
@@ -1684,55 +1910,46 @@ def render_transactions():
         transactions = fetch_dataframe(query, tuple(params))
         
         if not transactions.empty:
-            display_df = transactions.copy()
+            st.success(f"Found {len(transactions)} transactions")
             
+            display_df = transactions.copy()
             display_df['unit_price'] = display_df['unit_price'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
             display_df['total_amount'] = display_df['total_amount'].apply(lambda x: f"{st.session_state.currency} {x:,.2f}")
             
-            def format_type(t_type):
-                colors = {
-                    'sale': 'badge-success',
-                    'purchase': 'badge-info',
-                    'adjustment': 'badge-warning',
-                    'transfer': 'badge-secondary'
-                }
-                color = colors.get(t_type, 'badge-secondary')
-                return f'<span class="badge {color}">{t_type.upper()}</span>'
-            
-            display_df['type'] = display_df['type'].apply(format_type)
-            
-            html_table = display_df[['created_at', 'type', 'sku', 'product_name', 'quantity', 'unit_price', 'total_amount', 'reference']].to_html(
-                escape=False, index=False, classes='dataframe', border=0
+            st.dataframe(
+                display_df[['created_at', 'type', 'sku', 'product_name', 'quantity', 'unit_price', 'total_amount', 'reference']],
+                use_container_width=True,
+                column_config={
+                    'created_at': 'Date/Time',
+                    'type': 'Type',
+                    'sku': 'SKU',
+                    'product_name': 'Product',
+                    'quantity': 'Qty',
+                    'unit_price': 'Unit Price',
+                    'total_amount': 'Total',
+                    'reference': 'Reference'
+                },
+                hide_index=True
             )
-            st.markdown(html_table, unsafe_allow_html=True)
             
-            col_export, col_stats = st.columns(2)
+            col_export, col_refresh = st.columns(2)
             
             with col_export:
                 csv_data = transactions.to_csv(index=False)
                 st.download_button(
-                    label="Export Transaction History",
+                    label="Export to CSV",
                     data=csv_data,
-                    file_name="transaction_history.csv",
+                    file_name=f"transactions_{datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv",
                     use_container_width=True,
                     key="export_history"
                 )
             
-            with col_stats:
-                if st.button("Show Statistics", use_container_width=True, key="show_stats"):
-                    total_sales = transactions[transactions['type'] == 'sale']['total_amount'].sum()
-                    total_purchases = transactions[transactions['type'] == 'purchase']['total_amount'].sum()
-                    
-                    col_stat1, col_stat2, col_stat3 = st.columns(3)
-                    with col_stat1:
-                        st.metric("Total Sales", f"{st.session_state.currency} {total_sales:,.2f}")
-                    with col_stat2:
-                        st.metric("Total Purchases", f"{st.session_state.currency} {total_purchases:,.2f}")
-                    with col_stat3:
-                        st.metric("Transaction Count", len(transactions))
+            with col_refresh:
+                if st.button("Refresh", use_container_width=True, key="refresh_trans"):
+                    st.rerun()
         else:
-            st.info("No transactions found. Record your first transaction in the 'Record Transaction' tab.")
+            st.info("No transactions found matching your filters.")
 
 def render_suppliers():
     """Render suppliers page"""
@@ -2286,7 +2503,6 @@ def render_settings():
         
         with col_sys1:
             prevent_negative = st.checkbox("Prevent Negative Stock", value=True, key="prevent_negative")
-            auto_backup = st.checkbox("Automatic Backups", value=False, key="auto_backup")
         
         with col_sys2:
             email_alerts = st.checkbox("Email Alerts", value=False, key="email_alerts")
@@ -2334,7 +2550,10 @@ def render_settings():
                         st.info("No activity logs found")
                 except Exception as e:
                     st.info("No activity logs available")
-    
+                    
+    with st.expander("Backup & Restore", expanded=False):
+        render_backup_management()
+        
     with st.expander("Danger Zone", expanded=False):
         st.warning("Warning: These actions cannot be undone.")
         
@@ -2375,7 +2594,13 @@ def main():
                 st.warning("Could not initialize database. Running in limited mode.")
         except Exception as e:
             st.warning(f"Database setup: {str(e)}")
-    
+            
+    # Auto-backup on startup (if enabled)
+    if 'startup_backup_done' not in st.session_state:
+        if st.session_state.get('auto_backup', False):
+            create_backup()
+        st.session_state.startup_backup_done = True
+        
     render_sidebar()
     
     pages = {
@@ -2404,4 +2629,3 @@ if __name__ == "__main__":
     os.makedirs("backups", exist_ok=True)
     
     main()
-
