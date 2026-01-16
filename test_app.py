@@ -2522,7 +2522,6 @@ def render_settings():
         
         with col_sys1:
             prevent_negative = st.checkbox("Prevent Negative Stock", value=True, key="prevent_negative")
-            auto_backup = st.checkbox("Automatic Backups", value=False, key="auto_backup")
         
         with col_sys2:
             email_alerts = st.checkbox("Email Alerts", value=False, key="email_alerts")
@@ -2571,7 +2570,7 @@ def render_settings():
                 except Exception as e:
                     st.info("No activity logs available")
                     
-    with st.expander("Backup & Restore"):
+    with st.expander("Backup & Restore", expanded=False):
         render_backup_management()
         
     with st.expander("Danger Zone", expanded=False):
