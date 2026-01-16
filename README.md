@@ -1,7 +1,8 @@
 # InvyPro 2.0 - Professional Inventory Management System
 
 A powerful, modern, and user-friendly inventory management system built with Streamlit and SQLite/PostgreSQL. Perfect for small to medium-sized businesses looking for a complete inventory solution.
-Try it here: [InvyPro 2.0](https://syndromic-ai-epidemic-alert-system-yqfnwwwdxawqrxjsucfhgv.streamlit.app/)
+
+TRY IT HERE: [InvyPro 2.0](https://syndromic-ai-epidemic-alert-system-yqfnwwwdxawqrxjsucfhgv.streamlit.app/)
 
 ## App Screenshot:
 ![image alt](https://github.com/Omensah-15/Inventory-Manager-2.0/blob/efd692e88d7d02be55aa7c987330098820dd05fd/docs/screenshots/App_screenshot.png)
