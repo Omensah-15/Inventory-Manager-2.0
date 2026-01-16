@@ -2463,7 +2463,7 @@ def render_settings():
                 index=["GHS", "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"].index(
                     st.session_state.currency if st.session_state.currency in 
                     ["GHS", "USD", "EUR", "GBP", "JPY", "CAD", "AUD", "CHF", "CNY", "INR"] 
-                    #else "GHS"
+                    else "GHS"
                 ),
                 key="currency_setting"
             )
