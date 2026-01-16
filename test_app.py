@@ -562,6 +562,131 @@ def delete_backup(backup_filename):
         return {"success": False, "message": f"Delete failed: {str(e)}"}
 
 
+# Fix for Duplicate Key Error
+
+## Problem
+The key `"auto_backup"` is being used in two places:
+1. In `render_settings()` → System Settings section (line ~1520)
+2. In `render_backup_management()` → Backup & Restore section (line ~583)
+
+Streamlit doesn't allow duplicate widget keys in the same app session.
+
+---
+
+## Solution: Use Different Keys
+
+### Step 1: Update render_settings() - System Settings Section
+
+**Find this code (around line 1520):**
+
+```python
+with st.expander("System Settings"):
+    col_sys1, col_sys2 = st.columns(2)
+    
+    with col_sys1:
+        prevent_negative = st.checkbox("Prevent Negative Stock", value=True, key="prevent_negative")
+        auto_backup = st.checkbox("Automatic Backups", value=False, key="auto_backup")  # ← THIS ONE
+```
+
+**Change to:**
+
+```python
+with st.expander("System Settings"):
+    col_sys1, col_sys2 = st.columns(2)
+    
+    with col_sys1:
+        prevent_negative = st.checkbox("Prevent Negative Stock", value=True, key="prevent_negative")
+        # REMOVED: auto_backup checkbox from here
+        # This setting is now only in the "Backup & Restore" section
+```
+
+**Or if you want to keep it, use a different key:**
+
+```python
+        auto_backup_system = st.checkbox("Automatic Backups", value=False, key="auto_backup_system")
+```
+
+---
+
+### Step 2: Update render_backup_management() Function
+
+**Find this code (around line 583):**
+
+```python
+with col2:
+    auto_backup = st.checkbox(
+        "Automatic Backup on Startup",
+        value=st.session_state.get('auto_backup', False),
+        key="auto_backup_toggle"
+    )
+    st.session_state.auto_backup = auto_backup
+```
+
+**Replace with:**
+
+```python
+with col2:
+    auto_backup_enabled = st.checkbox(
+        "Automatic Backup on Startup",
+        value=st.session_state.get('auto_backup_enabled', False),
+        key="auto_backup_enabled"
+    )
+```
+
+---
+
+### Step 3: Update main() Function
+
+**Find this code (around line 2610):**
+
+```python
+# Auto-backup on startup (if enabled)
+if 'startup_backup_done' not in st.session_state:
+    if st.session_state.get('auto_backup', False):
+        create_backup()
+    st.session_state.startup_backup_done = True
+```
+
+**Replace with:**
+
+```python
+# Auto-backup on startup (if enabled)
+if 'startup_backup_done' not in st.session_state:
+    if st.session_state.get('auto_backup_enabled', False):  # Changed key
+        create_backup()
+    st.session_state.startup_backup_done = True
+```
+
+---
+
+## Quick Fix Summary
+
+### Option 1: Remove Duplicate (Recommended)
+Remove the `auto_backup` checkbox from **System Settings** section entirely, since you now have a complete Backup & Restore section.
+
+### Option 2: Rename Keys
+Keep both checkboxes but use different keys:
+- System Settings: `key="auto_backup_system"`
+- Backup & Restore: `key="auto_backup_enabled"`
+
+---
+
+## Testing After Fix
+
+1. Save your changes
+2. Restart the Streamlit app: `streamlit run test_app.py`
+3. Login and go to Settings
+4. Check that both sections work without errors
+5. Toggle the "Automatic Backup on Startup" checkbox
+6. Restart the app to verify auto-backup works
+
+---
+
+## Complete render_backup_management() Function (Fixed)
+
+Here's the complete corrected function:
+
+```python
 def render_backup_management():
     """Render backup management section in settings"""
     st.markdown("### Backup Management")
@@ -578,15 +703,12 @@ def render_backup_management():
                 st.error(result['message'])
     
     with col2:
-        # FIX: Remove the manual session state assignment
-        # Just use the checkbox value directly - Streamlit handles the state
-        auto_backup = st.checkbox(
+        # Fixed: Use unique key
+        auto_backup_enabled = st.checkbox(
             "Automatic Backup on Startup",
-            value=st.session_state.get('auto_backup', False),
-            key="auto_backup"  # Changed key name to match the session state key
+            value=st.session_state.get('auto_backup_enabled', False),
+            key="auto_backup_enabled"
         )
-        # Don't manually assign - Streamlit does this automatically
-        # st.session_state.auto_backup = auto_backup  # REMOVE THIS LINE
     
     st.markdown("---")
     st.markdown("#### Available Backups")
@@ -603,7 +725,6 @@ def render_backup_management():
                     st.write(f"**Size:** {backup['size_mb']:.2f} MB")
                 
                 with col_actions:
-                    # Download backup
                     with open(backup['path'], 'rb') as f:
                         st.download_button(
                             label="Download",
@@ -614,7 +735,6 @@ def render_backup_management():
                             key=f"download_{backup['filename']}"
                         )
                     
-                    # Restore backup
                     if st.button("Restore", use_container_width=True, key=f"restore_{backup['filename']}"):
                         result = restore_backup(backup['filename'])
                         if result['success']:
@@ -623,7 +743,6 @@ def render_backup_management():
                         else:
                             st.error(result['message'])
                     
-                    # Delete backup
                     if st.button("Delete", use_container_width=True, key=f"delete_{backup['filename']}"):
                         result = delete_backup(backup['filename'])
                         if result['success']:
@@ -634,7 +753,6 @@ def render_backup_management():
     else:
         st.info("No backups available. Create your first backup using the button above.")
     
-    # Cleanup old backups
     st.markdown("---")
     st.markdown("#### Backup Maintenance")
     
@@ -653,7 +771,6 @@ def render_backup_management():
     with col_clean2:
         if st.button("Cleanup Old Backups", use_container_width=True, key="cleanup_backups"):
             if len(backups) > max_backups:
-                # Delete oldest backups
                 to_delete = backups[max_backups:]
                 deleted_count = 0
                 
