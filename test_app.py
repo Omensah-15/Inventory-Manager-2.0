@@ -2547,7 +2547,10 @@ def render_settings():
                         st.info("No activity logs found")
                 except Exception as e:
                     st.info("No activity logs available")
-    
+                    
+    with st.expander("Backup & Restore"):
+        render_backup_management()
+        
     with st.expander("Danger Zone", expanded=False):
         st.warning("Warning: These actions cannot be undone.")
         
