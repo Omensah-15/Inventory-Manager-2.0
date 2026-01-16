@@ -472,7 +472,6 @@ def create_backup():
         backup_filename = f"backup_{org_safe}_{timestamp}.db"
         backup_path = backup_dir / backup_filename
         
-        # Copy the database file
         shutil.copy2(config.DB_FILE, backup_path)
         
         log_activity(
@@ -496,22 +495,71 @@ def list_backups():
         
         backups = []
         for backup_file in backup_dir.glob("backup_*.db"):
-            stat = backup_file.stat()
-            backups.append({
-                'filename': backup_file.name,
-                'path': str(backup_file),
-                'size': stat.st_size,
-                'created': datetime.fromtimestamp(stat.st_mtime),
-                'size_mb': stat.st_size / (1024 * 1024)
-            })
+            try:
+                stat = backup_file.stat()
+                backups.append({
+                    'filename': backup_file.name,
+                    'path': str(backup_file),
+                    'size': stat.st_size,
+                    'created': datetime.fromtimestamp(stat.st_mtime),
+                    'size_mb': stat.st_size / (1024 * 1024)
+                })
+            except Exception as e:
+                print(f"Error reading backup file {backup_file}: {e}")
+                continue
         
-        # Sort by creation time, newest first
         backups.sort(key=lambda x: x['created'], reverse=True)
         return backups
     
     except Exception as e:
         print(f"Error listing backups: {e}")
         return []
+
+
+def restore_backup(backup_filename):
+    """Restore database from backup"""
+    try:
+        backup_path = Path("backups") / backup_filename
+        
+        if not backup_path.exists():
+            return {"success": False, "message": "Backup file not found"}
+        
+        create_backup()
+        shutil.copy2(backup_path, config.DB_FILE)
+        
+        log_activity(
+            user_id=st.session_state.get('user_id'),
+            action="backup_restored",
+            details=f"Database restored from: {backup_filename}"
+        )
+        
+        return {"success": True, "message": f"Database restored from {backup_filename}"}
+    
+    except Exception as e:
+        return {"success": False, "message": f"Restore failed: {str(e)}"}
+
+
+def delete_backup(backup_filename):
+    """Delete a backup file"""
+    try:
+        backup_path = Path("backups") / backup_filename
+        
+        if not backup_path.exists():
+            return {"success": False, "message": "Backup file not found"}
+        
+        backup_path.unlink()
+        
+        log_activity(
+            user_id=st.session_state.get('user_id'),
+            action="backup_deleted",
+            details=f"Backup deleted: {backup_filename}"
+        )
+        
+        return {"success": True, "message": "Backup deleted successfully"}
+    
+    except Exception as e:
+        return {"success": False, "message": f"Delete failed: {str(e)}"}
+
 
 def render_backup_management():
     """Render backup management section in settings"""
@@ -521,63 +569,89 @@ def render_backup_management():
     
     with col1:
         if st.button("Create Backup Now", use_container_width=True, type="primary", key="create_backup_btn"):
-            result = create_backup()
-            if result['success']:
-                st.success(result['message'])
-                st.rerun()
-            else:
-                st.error(result['message'])
+            with st.spinner("Creating backup..."):
+                result = create_backup()
+                if result['success']:
+                    st.success(result['message'])
+                    st.rerun()
+                else:
+                    st.error(result['message'])
     
     with col2:
-        # Fixed: Use unique key
         auto_backup_enabled = st.checkbox(
             "Automatic Backup on Startup",
             value=st.session_state.get('auto_backup_enabled', False),
-            key="auto_backup_enabled"
+            key="auto_backup_enabled",
+            help="Automatically create a backup every time the app starts"
         )
     
     st.markdown("---")
     st.markdown("#### Available Backups")
     
-    backups = list_backups()
+    try:
+        backups = list_backups()
+        
+        if backups:
+            st.info(f"Found {len(backups)} backup(s)")
+            
+            for idx, backup in enumerate(backups):
+                with st.expander(f"{backup['filename']} ({backup['size_mb']:.2f} MB)", expanded=False):
+                    col_info, col_actions = st.columns([2, 1])
+                    
+                    with col_info:
+                        st.write(f"**Created:** {backup['created'].strftime('%Y-%m-%d %H:%M:%S')}")
+                        st.write(f"**Size:** {backup['size_mb']:.2f} MB")
+                        st.write(f"**File:** {backup['filename']}")
+                    
+                    with col_actions:
+                        try:
+                            with open(backup['path'], 'rb') as f:
+                                backup_data = f.read()
+                                st.download_button(
+                                    label="Download",
+                                    data=backup_data,
+                                    file_name=backup['filename'],
+                                    mime="application/octet-stream",
+                                    use_container_width=True,
+                                    key=f"download_backup_{idx}"
+                                )
+                        except Exception as e:
+                            st.error(f"Cannot download: {str(e)}")
+                        
+                        if st.button("Restore", use_container_width=True, key=f"restore_backup_{idx}"):
+                            if st.session_state.get(f'confirm_restore_{idx}', False):
+                                with st.spinner("Restoring backup..."):
+                                    result = restore_backup(backup['filename'])
+                                    if result['success']:
+                                        st.success(result['message'])
+                                        st.info("Please refresh the page to see changes")
+                                        st.session_state[f'confirm_restore_{idx}'] = False
+                                    else:
+                                        st.error(result['message'])
+                            else:
+                                st.session_state[f'confirm_restore_{idx}'] = True
+                                st.warning("Click 'Restore' again to confirm. This will replace your current database!")
+                                st.rerun()
+                        
+                        if st.button("🗑️ Delete", use_container_width=True, key=f"delete_backup_{idx}"):
+                            if st.session_state.get(f'confirm_delete_{idx}', False):
+                                with st.spinner("Deleting backup..."):
+                                    result = delete_backup(backup['filename'])
+                                    if result['success']:
+                                        st.success(result['message'])
+                                        st.session_state[f'confirm_delete_{idx}'] = False
+                                        st.rerun()
+                                    else:
+                                        st.error(result['message'])
+                            else:
+                                st.session_state[f'confirm_delete_{idx}'] = True
+                                st.warning("Click 'Delete' again to confirm")
+                                st.rerun()
+        else:
+            st.info("No backups available. Create your first backup using the button above.")
     
-    if backups:
-        for backup in backups:
-            with st.expander(f"📦 {backup['filename']} ({backup['size_mb']:.2f} MB)"):
-                col_info, col_actions = st.columns([2, 1])
-                
-                with col_info:
-                    st.write(f"**Created:** {backup['created'].strftime('%Y-%m-%d %H:%M:%S')}")
-                    st.write(f"**Size:** {backup['size_mb']:.2f} MB")
-                
-                with col_actions:
-                    with open(backup['path'], 'rb') as f:
-                        st.download_button(
-                            label="Download",
-                            data=f.read(),
-                            file_name=backup['filename'],
-                            mime="application/octet-stream",
-                            use_container_width=True,
-                            key=f"download_{backup['filename']}"
-                        )
-                    
-                    if st.button("Restore", use_container_width=True, key=f"restore_{backup['filename']}"):
-                        result = restore_backup(backup['filename'])
-                        if result['success']:
-                            st.success(result['message'])
-                            st.rerun()
-                        else:
-                            st.error(result['message'])
-                    
-                    if st.button("Delete", use_container_width=True, key=f"delete_{backup['filename']}"):
-                        result = delete_backup(backup['filename'])
-                        if result['success']:
-                            st.success(result['message'])
-                            st.rerun()
-                        else:
-                            st.error(result['message'])
-    else:
-        st.info("No backups available. Create your first backup using the button above.")
+    except Exception as e:
+        st.error(f"Error loading backups: {str(e)}")
     
     st.markdown("---")
     st.markdown("#### Backup Maintenance")
@@ -591,25 +665,29 @@ def render_backup_management():
             max_value=50,
             value=10,
             help="Automatically delete old backups beyond this limit",
-            key="max_backups"
+            key="max_backups_input"
         )
     
     with col_clean2:
-        if st.button("Cleanup Old Backups", use_container_width=True, key="cleanup_backups"):
-            if len(backups) > max_backups:
-                to_delete = backups[max_backups:]
-                deleted_count = 0
-                
-                for backup in to_delete:
-                    result = delete_backup(backup['filename'])
-                    if result['success']:
-                        deleted_count += 1
-                
-                st.success(f"Deleted {deleted_count} old backup(s)")
-                st.rerun()
-            else:
-                st.info(f"Only {len(backups)} backup(s) exist. No cleanup needed.")
-
+        if st.button("Cleanup Old Backups", use_container_width=True, key="cleanup_backups_btn"):
+            try:
+                backups = list_backups()
+                if len(backups) > max_backups:
+                    with st.spinner("Cleaning up old backups..."):
+                        to_delete = backups[max_backups:]
+                        deleted_count = 0
+                        
+                        for backup in to_delete:
+                            result = delete_backup(backup['filename'])
+                            if result['success']:
+                                deleted_count += 1
+                        
+                        st.success(f"Deleted {deleted_count} old backup(s)")
+                        st.rerun()
+                else:
+                    st.info(f"Only {len(backups)} backup(s) exist. No cleanup needed.")
+            except Exception as e:
+                st.error(f"Cleanup failed: {str(e)}")
 
 # ============================================================================
 # SECURITY & AUTHENTICATION
