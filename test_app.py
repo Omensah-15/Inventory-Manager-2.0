@@ -1429,7 +1429,7 @@ def render_dashboard():
             st.rerun()
 
 def render_products():
-    """Render products management page - FIXED VERSION"""
+    """Render products management page - COMPLETE FIX"""
     st.markdown("<h1 class='main-header'>Products</h1>", unsafe_allow_html=True)
     
     if not st.session_state.authenticated:
@@ -1442,7 +1442,7 @@ def render_products():
         col_search, col_filter, col_page = st.columns(3)
         
         with col_search:
-            search_term = st.text_input("Search products", placeholder="SKU, name, description...", key="product_search")
+            search_term = st.text_input("🔍 Search products", placeholder="SKU, name, description...", key="product_search")
         
         with col_filter:
             stock_filter = st.selectbox(
@@ -1454,9 +1454,7 @@ def render_products():
         with col_page:
             page_size = st.selectbox("Items per page", [10, 25, 50, 100], index=1, key="page_size")
         
-        page_number = st.number_input("Page", min_value=1, value=1, step=1, key="page_number")
-        
-        products = get_products(search=search_term, page=page_number, page_size=page_size)
+        products = get_products(search=search_term, page=1, page_size=page_size)
         
         if not products.empty:
             # Apply stock filter
@@ -1487,16 +1485,6 @@ def render_products():
             st.dataframe(
                 display_df,
                 use_container_width=True,
-                column_config={
-                    "sku": "SKU",
-                    "name": "Product Name",
-                    "category": "Category",
-                    "quantity": "Quantity",
-                    "cost_price": "Cost",
-                    "sell_price": "Price",
-                    "location": "Location",
-                    "status": "Status"
-                },
                 hide_index=True
             )
             
@@ -1506,7 +1494,7 @@ def render_products():
                 st.download_button(
                     label="Export to CSV",
                     data=csv,
-                    file_name="products_export.csv",
+                    file_name=f"products_{datetime.now().strftime('%Y%m%d')}.csv",
                     mime="text/csv",
                     key="export_csv",
                     use_container_width=True
@@ -1526,67 +1514,30 @@ def render_products():
             col1, col2 = st.columns(2)
             
             with col1:
-                sku = st.text_input("SKU *", help="Unique product identifier", key="add_sku")
-                name = st.text_input("Product Name *", key="add_name")
-                description = st.text_area("Description", key="add_description")
-                category = st.text_input("Category", key="add_category")
-                supplier = st.text_input("Supplier", key="add_supplier")
+                sku = st.text_input("SKU *", help="Unique product identifier")
+                name = st.text_input("Product Name *")
+                description = st.text_area("Description")
+                category = st.text_input("Category")
+                supplier = st.text_input("Supplier")
             
             with col2:
-                unit = st.selectbox("Unit", ["pcs", "kg", "liters", "boxes", "meters", "units", "pairs", "dozen"], key="add_unit")
-                location = st.text_input("Location", placeholder="Shelf A1, Warehouse B, etc.", key="add_location")
-                barcode = st.text_input("Barcode (Optional)", key="add_barcode")
-                notes = st.text_area("Notes", key="add_notes")
+                unit = st.selectbox("Unit", ["pcs", "kg", "liters", "boxes", "meters", "units", "pairs", "dozen"])
+                location = st.text_input("Location", placeholder="Shelf A1, Warehouse B, etc.")
+                barcode = st.text_input("Barcode (Optional)")
+                notes = st.text_area("Notes")
             
             col3, col4, col5 = st.columns(3)
             
             with col3:
-                cost_price = st.number_input(
-                    "Cost Price *",
-                    min_value=0.0,
-                    value=0.0,
-                    step=0.01,
-                    format="%.2f",
-                    help="Purchase cost per unit",
-                    key="add_cost_price"
-                )
-                quantity = st.number_input(
-                    "Initial Quantity *",
-                    min_value=0,
-                    value=0,
-                    step=1,
-                    help="Current stock level",
-                    key="add_quantity"
-                )
+                cost_price = st.number_input("Cost Price *", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+                quantity = st.number_input("Initial Quantity *", min_value=0, value=0, step=1)
             
             with col4:
-                sell_price = st.number_input(
-                    "Selling Price *",
-                    min_value=0.0,
-                    value=0.0,
-                    step=0.01,
-                    format="%.2f",
-                    help="Selling price per unit",
-                    key="add_sell_price"
-                )
-                min_quantity = st.number_input(
-                    "Minimum Quantity",
-                    min_value=0,
-                    value=5,
-                    step=1,
-                    help="Minimum stock level before alert",
-                    key="add_min_quantity"
-                )
+                sell_price = st.number_input("Selling Price *", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+                min_quantity = st.number_input("Minimum Quantity", min_value=0, value=5, step=1)
             
             with col5:
-                reorder_level = st.number_input(
-                    "Reorder Level *",
-                    min_value=0,
-                    value=10,
-                    step=1,
-                    help="Reorder when stock reaches this level",
-                    key="add_reorder_level"
-                )
+                reorder_level = st.number_input("Reorder Level *", min_value=0, value=10, step=1)
             
             submitted = st.form_submit_button("Save Product", type="primary", use_container_width=True)
             
@@ -1617,10 +1568,11 @@ def render_products():
                     
                     result = add_product(product_data)
                     if result['success']:
-                        st.success(result['message'])
+                        st.success(f"{result['message']}")
+                        st.balloons()
                         st.rerun()
                     else:
-                        st.error(result['message'])
+                        st.error(f"{result['message']}")
     
     with tab3:
         st.subheader("Edit Product")
@@ -1628,154 +1580,125 @@ def render_products():
         all_products = get_products(page_size=1000)
         
         if not all_products.empty:
-            product_options = ["-- Select Product --"] + all_products['name'].tolist()
-            selected_product = st.selectbox("Select product to edit", product_options, key="edit_product_select")
+            # Create selection list
+            product_list = all_products[['product_id', 'name', 'sku']].to_dict('records')
+            product_display = [f"{p['name']} (SKU: {p['sku']})" for p in product_list]
             
-            if selected_product != "-- Select Product --":
-                product_idx = all_products[all_products['name'] == selected_product].index[0]
-                product_data = all_products.iloc[product_idx]
-                
-                # Show product info
-                st.info(f"Editing: {product_data['name']} (SKU: {product_data['sku']})")
-                
-                col1, col2 = st.columns(2)
-                
-                with col1:
-                    edit_sku = st.text_input("SKU", value=product_data['sku'], disabled=True, key="edit_sku")
-                    edit_name = st.text_input("Product Name *", value=product_data['name'], key="edit_name")
-                    edit_description = st.text_area("Description", value=product_data['description'] or "", key="edit_description")
-                    edit_category = st.text_input("Category", value=product_data['category'] or "", key="edit_category")
-                    edit_supplier = st.text_input("Supplier", value=product_data['supplier'] or "", key="edit_supplier")
-                
-                with col2:
-                    edit_unit = st.selectbox("Unit", 
-                                           ["pcs", "kg", "liters", "boxes", "meters", "units", "pairs", "dozen"],
-                                           index=["pcs", "kg", "liters", "boxes", "meters", "units", "pairs", "dozen"].index(
-                                               product_data['unit'] if product_data['unit'] in 
-                                               ["pcs", "kg", "liters", "boxes", "meters", "units", "pairs", "dozen"] 
-                                               else "pcs"
-                                           ), key="edit_unit")
-                    edit_location = st.text_input("Location", value=product_data['location'] or "", key="edit_location")
-                    edit_barcode = st.text_input("Barcode", value=product_data['barcode'] or "", key="edit_barcode")
-                    edit_notes = st.text_area("Notes", value=product_data['notes'] or "", key="edit_notes")
-                
-                col3, col4, col5 = st.columns(3)
-                
-                with col3:
-                    edit_cost = st.number_input(
-                        "Cost Price *",
-                        min_value=0.0,
-                        value=float(product_data['cost_price']),
-                        step=0.01,
-                        format="%.2f",
-                        key="edit_cost"
-                    )
-                    edit_quantity = st.number_input(
-                        "Quantity *",
-                        min_value=0,
-                        value=int(product_data['quantity']),
-                        step=1,
-                        key="edit_quantity"
-                    )
-                
-                with col4:
-                    edit_price = st.number_input(
-                        "Selling Price *",
-                        min_value=0.0,
-                        value=float(product_data['sell_price']),
-                        step=0.01,
-                        format="%.2f",
-                        key="edit_price"
-                    )
-                    edit_min_qty = st.number_input(
-                        "Minimum Quantity",
-                        min_value=0,
-                        value=int(product_data['min_quantity']),
-                        step=1,
-                        key="edit_min_qty"
-                    )
-                
-                with col5:
-                    edit_reorder = st.number_input(
-                        "Reorder Level *",
-                        min_value=0,
-                        value=int(product_data['reorder_level']),
-                        step=1,
-                        key="edit_reorder"
-                    )
-                
-                st.markdown("---")
-                
-                col_update, col_delete, col_cancel = st.columns([2, 2, 1])
-                
-                with col_update:
-                    if st.button("Update Product", use_container_width=True, type="primary", key="btn_update_product"):
-                        if not edit_name:
-                            st.error("Product name is required")
-                        elif edit_cost < 0 or edit_price < 0:
-                            st.error("Prices cannot be negative")
-                        elif edit_quantity < 0:
-                            st.error("Quantity cannot be negative")
-                        else:
-                            updated_data = {
-                                'sku': edit_sku,
-                                'name': edit_name,
-                                'description': edit_description,
-                                'category': edit_category,
-                                'supplier': edit_supplier,
-                                'unit': edit_unit,
-                                'cost_price': edit_cost,
-                                'sell_price': edit_price,
-                                'quantity': edit_quantity,
-                                'min_quantity': edit_min_qty,
-                                'reorder_level': edit_reorder,
-                                'location': edit_location,
-                                'barcode': edit_barcode,
-                                'notes': edit_notes
-                            }
-                            
-                            result = update_product(product_data['product_id'], updated_data)
-                            if result['success']:
-                                st.success(f"{result['message']}")
-                                st.balloons()
-                                st.rerun()
-                            else:
-                                st.error(f"{result['message']}")
-                
-                with col_delete:
-                    # Use session state to track delete confirmation
-                    delete_key = f"confirm_delete_{product_data['product_id']}"
-                    
-                    if delete_key not in st.session_state:
-                        st.session_state[delete_key] = False
-                    
-                    if not st.session_state[delete_key]:
-                        if st.button("Delete Product", use_container_width=True, type="secondary", key="btn_delete_product"):
-                            st.session_state[delete_key] = True
-                            st.rerun()
+            selected_index = st.selectbox(
+                "Select product to edit",
+                range(len(product_display)),
+                format_func=lambda i: product_display[i],
+                key="edit_product_select"
+            )
+            
+            # Get selected product
+            selected_product_id = product_list[selected_index]['product_id']
+            product_data = all_products[all_products['product_id'] == selected_product_id].iloc[0]
+            
+            st.info(f"Editing: {product_data['name']} (SKU: {product_data['sku']})")
+            
+            # Create form
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                edit_sku = st.text_input("SKU", value=product_data['sku'], disabled=True, key="edit_sku")
+                edit_name = st.text_input("Product Name *", value=product_data['name'], key="edit_name")
+                edit_description = st.text_area("Description", value=product_data['description'] or "", key="edit_description")
+                edit_category = st.text_input("Category", value=product_data['category'] or "", key="edit_category")
+                edit_supplier = st.text_input("Supplier", value=product_data['supplier'] or "", key="edit_supplier")
+            
+            with col2:
+                units = ["pcs", "kg", "liters", "boxes", "meters", "units", "pairs", "dozen"]
+                unit_index = units.index(product_data['unit']) if product_data['unit'] in units else 0
+                edit_unit = st.selectbox("Unit", units, index=unit_index, key="edit_unit")
+                edit_location = st.text_input("Location", value=product_data['location'] or "", key="edit_location")
+                edit_barcode = st.text_input("Barcode", value=product_data['barcode'] or "", key="edit_barcode")
+                edit_notes = st.text_area("Notes", value=product_data['notes'] or "", key="edit_notes")
+            
+            col3, col4, col5 = st.columns(3)
+            
+            with col3:
+                edit_cost = st.number_input("Cost Price *", min_value=0.0, value=float(product_data['cost_price']), step=0.01, format="%.2f", key="edit_cost")
+                edit_quantity = st.number_input("Quantity *", min_value=0, value=int(product_data['quantity']), step=1, key="edit_quantity")
+            
+            with col4:
+                edit_price = st.number_input("Selling Price *", min_value=0.0, value=float(product_data['sell_price']), step=0.01, format="%.2f", key="edit_price")
+                edit_min_qty = st.number_input("Minimum Quantity", min_value=0, value=int(product_data['min_quantity']), step=1, key="edit_min_qty")
+            
+            with col5:
+                edit_reorder = st.number_input("Reorder Level *", min_value=0, value=int(product_data['reorder_level']), step=1, key="edit_reorder")
+            
+            st.markdown("---")
+            
+            # Action buttons
+            col_update, col_delete, col_cancel = st.columns([2, 2, 1])
+            
+            # Initialize delete confirmation in session state
+            delete_confirm_key = f"delete_confirm_{selected_product_id}"
+            if delete_confirm_key not in st.session_state:
+                st.session_state[delete_confirm_key] = False
+            
+            with col_update:
+                if st.button("Update Product", use_container_width=True, type="primary", key=f"btn_update_{selected_product_id}"):
+                    if not edit_name:
+                        st.error("Product name is required")
+                    elif edit_cost < 0 or edit_price < 0:
+                        st.error("Prices cannot be negative")
+                    elif edit_quantity < 0:
+                        st.error("Quantity cannot be negative")
                     else:
-                        if st.button("Confirm Delete", use_container_width=True, type="secondary", key="btn_confirm_delete"):
-                            result = delete_product(product_data['product_id'])
-                            if result['success']:
-                                st.success(f"{result['message']}")
-                                st.session_state[delete_key] = False
-                                st.rerun()
-                            else:
-                                st.error(f"{result['message']}")
-                
-                with col_cancel:
-                    if st.button("Cancel", use_container_width=True, key="btn_cancel_edit"):
-                        # Clear any delete confirmations
-                        delete_key = f"confirm_delete_{product_data['product_id']}"
-                        if delete_key in st.session_state:
-                            st.session_state[delete_key] = False
+                        updated_data = {
+                            'sku': edit_sku,
+                            'name': edit_name,
+                            'description': edit_description,
+                            'category': edit_category,
+                            'supplier': edit_supplier,
+                            'unit': edit_unit,
+                            'cost_price': edit_cost,
+                            'sell_price': edit_price,
+                            'quantity': edit_quantity,
+                            'min_quantity': edit_min_qty,
+                            'reorder_level': edit_reorder,
+                            'location': edit_location,
+                            'barcode': edit_barcode,
+                            'notes': edit_notes
+                        }
+                        
+                        result = update_product(selected_product_id, updated_data)
+                        if result['success']:
+                            st.success(f"Product updated successfully!")
+                            st.balloons()
+                            # Clear confirmation state
+                            st.session_state[delete_confirm_key] = False
+                            st.rerun()
+                        else:
+                            st.error(f"{result['message']}")
+            
+            with col_delete:
+                if not st.session_state[delete_confirm_key]:
+                    if st.button("Delete Product", use_container_width=True, type="secondary", key=f"btn_delete_{selected_product_id}"):
+                        st.session_state[delete_confirm_key] = True
                         st.rerun()
-                
-                # Show warning if delete is pending
-                if st.session_state.get(f"confirm_delete_{product_data['product_id']}", False):
-                    st.warning("Click 'Confirm Delete' again to permanently delete this product. This action cannot be undone!")
+                else:
+                    if st.button("CONFIRM DELETE", use_container_width=True, type="secondary", key=f"btn_confirm_delete_{selected_product_id}"):
+                        result = delete_product(selected_product_id)
+                        if result['success']:
+                            st.success(f"Product deleted successfully!")
+                            st.session_state[delete_confirm_key] = False
+                            st.rerun()
+                        else:
+                            st.error(f"{result['message']}")
+            
+            with col_cancel:
+                if st.button("Cancel", use_container_width=True, key=f"btn_cancel_{selected_product_id}"):
+                    st.session_state[delete_confirm_key] = False
+                    st.rerun()
+            
+            # Show warning
+            if st.session_state[delete_confirm_key]:
+                st.error("**WARNING:** Click 'CONFIRM DELETE' to permanently delete this product. This action cannot be undone!")
         else:
-            st.info("No products available to edit. Add products first.")
+            st.info("No products available to edit. Add products first in the 'Add Product' tab.")
 
 def render_transactions():
     """Render transactions page - COMPLETE FIX"""
