@@ -2591,7 +2591,13 @@ def main():
                 st.warning("Could not initialize database. Running in limited mode.")
         except Exception as e:
             st.warning(f"Database setup: {str(e)}")
-    
+            
+    # Auto-backup on startup (if enabled)
+    if 'startup_backup_done' not in st.session_state:
+        if st.session_state.get('auto_backup', False):
+            create_backup()
+        st.session_state.startup_backup_done = True
+        
     render_sidebar()
     
     pages = {
