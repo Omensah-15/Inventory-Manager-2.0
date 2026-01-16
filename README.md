@@ -2,7 +2,7 @@
 
 A powerful, modern, and user-friendly inventory management system built with Streamlit and SQLite/PostgreSQL. Perfect for small to medium-sized businesses looking for a complete inventory solution.
 
-**TRY IT HERE**: [InvyPro 2.0](https://inventory-manager-20-hbqj6uscaxyvhzgldufk8w.streamlit.app/)
+**TRY IT HERE**: [InvyPro 2.0](https://syndromic-ai-epidemic-alert-system-yqfnwwwdxawqrxjsucfhgv.streamlit.app/)
 
 ## App Demo Screenshots:
 ![image alt](https://github.com/Omensah-15/Inventory-Manager-2.0/blob/cae9500074e21d75fea8587b4092ca7dee97a912/docs/screenshots/Dashboard.png)
