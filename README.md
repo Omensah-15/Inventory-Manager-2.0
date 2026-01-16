@@ -4,7 +4,7 @@ A powerful, modern, and user-friendly inventory management system built with Str
 
 **TRY IT HERE**: [InvyPro 2.0](https://syndromic-ai-epidemic-alert-system-yqfnwwwdxawqrxjsucfhgv.streamlit.app/)
 
-## App Demo:
+## App Demo Screenshots:
 ![image alt](https://github.com/Omensah-15/Inventory-Manager-2.0/blob/cae9500074e21d75fea8587b4092ca7dee97a912/docs/screenshots/Dashboard.png)
 ![image alt](https://github.com/Omensah-15/Inventory-Manager-2.0/blob/cae9500074e21d75fea8587b4092ca7dee97a912/docs/screenshots/Reports%26Analytics.png)
 ![image alt](https://github.com/Omensah-15/Inventory-Manager-2.0/blob/cae9500074e21d75fea8587b4092ca7dee97a912/docs/screenshots/settings.png)
