@@ -1110,7 +1110,7 @@ def get_recent_transactions(limit: int = 10):
     return fetch_dataframe(query, (org, limit))
 
 def record_transaction(transaction_data: dict):
-    """Record a new transaction"""
+    """Record a new transaction - FIXED VERSION"""
     org = get_current_organization()
     if not org:
         return {"success": False, "message": "Not authenticated"}
@@ -1138,32 +1138,33 @@ def record_transaction(transaction_data: dict):
         )
         
         # Update product stock based on transaction type
-        # In record_transaction(), add validation:
-        if transaction_data['type'] == 'adjustment' and transaction_data['quantity'] < 0:
-            return {"success": False, "message": "Adjustment quantity cannot be negative"}
-        if transaction_data['type'] in ['sale', 'purchase', 'adjustment']:
-            current_qty_result = execute_query(
-                "SELECT quantity FROM products WHERE product_id = ? AND organization = ?",
-                (transaction_data['product_id'], org),
-                fetch=True
-            )
+        current_qty_result = execute_query(
+            "SELECT quantity FROM products WHERE product_id = ? AND organization = ?",
+            (transaction_data['product_id'], org),
+            fetch=True
+        )
+        
+        if current_qty_result:
+            current_qty = current_qty_result[0][0]
             
-            if current_qty_result:
-                current_qty = current_qty_result[0][0]
-                
-                if transaction_data['type'] == 'sale':
-                    new_quantity = current_qty - transaction_data['quantity']
-                elif transaction_data['type'] == 'purchase':
-                    new_quantity = current_qty + transaction_data['quantity']
-                elif transaction_data['type'] == 'adjustment':
-                    new_quantity = transaction_data['quantity']
-                else:
-                    new_quantity = current_qty
-                
-                execute_query(
-                    "UPDATE products SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ?",
-                    (new_quantity, transaction_data['product_id'])
-                )
+            if transaction_data['type'] == 'sale':
+                new_quantity = current_qty - transaction_data['quantity']
+            elif transaction_data['type'] == 'purchase':
+                new_quantity = current_qty + transaction_data['quantity']
+            elif transaction_data['type'] == 'adjustment':
+                # For adjustment, the quantity is the NEW total quantity
+                new_quantity = transaction_data['quantity']
+            else:  # transfer
+                new_quantity = current_qty
+            
+            # Ensure quantity doesn't go negative
+            if new_quantity < 0:
+                return {"success": False, "message": "Transaction would result in negative stock"}
+            
+            execute_query(
+                "UPDATE products SET quantity = ?, updated_at = CURRENT_TIMESTAMP WHERE product_id = ?",
+                (new_quantity, transaction_data['product_id'])
+            )
         
         # Log activity
         product_name_result = execute_query(
